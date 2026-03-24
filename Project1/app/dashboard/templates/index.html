@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Marketing Simulation</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7fa;
+      color: #2d3748;
+      padding: 20px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    header h1 { font-size: 1.4rem; font-weight: 700; }
+    header .meta { font-size: 0.82rem; color: #718096; }
+    header .meta span { margin-right: 14px; }
+
+    #run-btn {
+      padding: 9px 22px;
+      background: #4f46e5;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #run-btn:hover { background: #4338ca; }
+    #run-btn:disabled { background: #a5b4fc; cursor: not-allowed; }
+
+    /* Progress */
+    #progress-wrap {
+      background: white;
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.07);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    #day-label { font-size: 0.85rem; white-space: nowrap; min-width: 100px; }
+    #progress-bar-wrap { flex: 1; background: #e2e8f0; border-radius: 6px; height: 10px; overflow: hidden; }
+    #progress-bar { height: 100%; width: 0%; background: #4f46e5; border-radius: 6px; transition: width 0.4s; }
+    #visit-rate-label { font-size: 0.85rem; white-space: nowrap; min-width: 140px; text-align: right; }
+
+    /* Segment cards */
+    #seg-cards {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .seg-card {
+      background: white;
+      border-radius: 10px;
+      padding: 12px 16px;
+      min-width: 140px;
+      flex: 1;
+      box-shadow: 0 1px 4px rgba(0,0,0,.07);
+      border-top: 4px solid #ccc;
+    }
+    .seg-card .seg-name  { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #718096; }
+    .seg-card .seg-acc   { font-size: 1.8rem; font-weight: 800; line-height: 1.1; }
+    .seg-card .seg-count { font-size: 0.75rem; color: #a0aec0; margin-top: 2px; }
+    .seg-card .seg-hook  { font-size: 0.7rem; color: #718096; margin-top: 6px; font-style: italic; line-height: 1.3; }
+
+    /* Charts grid */
+    #charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .chart-card {
+      background: white;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.07);
+    }
+    .chart-card h3 { font-size: 0.82rem; font-weight: 600; color: #718096; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .chart-card canvas { max-height: 200px; }
+
+    /* Hooks table */
+    #hooks-section {
+      background: white;
+      border-radius: 10px;
+      padding: 16px 18px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.07);
+    }
+    #hooks-section h3 { font-size: 0.82rem; font-weight: 600; color: #718096; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .05em; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { text-align: left; padding: 6px 10px; background: #f7fafc; color: #4a5568; font-weight: 600; border-bottom: 2px solid #e2e8f0; }
+    td { padding: 6px 10px; border-bottom: 1px solid #edf2f7; }
+    tr:last-child td { border-bottom: none; }
+    .score-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 0.78rem;
+      background: #ebf8ff;
+      color: #2b6cb0;
+    }
+
+    #status-bar {
+      margin-top: 14px;
+      font-size: 0.78rem;
+      color: #718096;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>AI Marketing Simulation</h1>
+    <div class="meta">
+      <span>Mode: <b>{{ mode }}</b></span>
+      <span>Duration: <b>{{ total_days }} days</b></span>
+      <span>OPRO every <b>{{ opro_cycle }} days</b></span>
+    </div>
+  </div>
+  <button id="run-btn" onclick="startSim()">▶ Run Simulation</button>
+</header>
+
+<!-- Progress -->
+<div id="progress-wrap">
+  <span id="day-label">Day 0 / {{ total_days }}</span>
+  <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+  <span id="visit-rate-label">Overall visit rate: —</span>
+</div>
+
+<!-- Segment cards -->
+<div id="seg-cards"></div>
+
+<!-- Charts -->
+<div id="charts-grid">
+  <div class="chart-card">
+    <h3>Accuracy per segment</h3>
+    <canvas id="chart-accuracy"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Visit rate per segment</h3>
+    <canvas id="chart-visitrate"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Overall visit rate</h3>
+    <canvas id="chart-overall"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Final accuracy by segment</h3>
+    <canvas id="chart-bar"></canvas>
+  </div>
+</div>
+
+<!-- Hooks table -->
+<div id="hooks-section">
+  <h3>Best hook per segment</h3>
+  <table id="hooks-table">
+    <thead><tr><th>Segment</th><th>Best hook</th><th>Score</th></tr></thead>
+    <tbody id="hooks-tbody"><tr><td colspan="3" style="color:#a0aec0">No data yet</td></tr></tbody>
+  </table>
+</div>
+
+<div id="status-bar">Ready — click Run Simulation to start.</div>
+
+<script>
+const SEG_COLORS = { H:"#2196F3", N:"#4CAF50", R:"#FF9800", L:"#9C27B0", A:"#F44336" };
+const TOTAL_DAYS = {{ total_days | tojson }};
+
+function segColor(seg) { return SEG_COLORS[seg] || "#607D8B"; }
+
+// ── State ──────────────────────────────────────────────────────────────
+let days = [], segOrder = [];
+let accData = {}, visitData = {}, overallData = [];
+let bestHooks = {};  // seg -> {hook, score}
+
+// ── Charts ─────────────────────────────────────────────────────────────
+function makeLineChart(id, title) {
+  return new Chart(document.getElementById(id), {
+    type: "line",
+    data: { labels: [], datasets: [] },
+    options: {
+      animation: false,
+      responsive: true,
+      scales: {
+        x: { title: { display: true, text: "Day" }, ticks: { maxTicksLimit: 10 } },
+        y: { min: 0, max: 1, title: { display: true, text: title } }
+      },
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } }
+    }
+  });
+}
+
+const chartAcc  = makeLineChart("chart-accuracy",  "Accuracy");
+const chartVR   = makeLineChart("chart-visitrate", "Visit rate");
+const chartOvr  = new Chart(document.getElementById("chart-overall"), {
+  type: "line",
+  data: { labels: [], datasets: [{ label: "Overall", data: [], borderColor: "#37474F", backgroundColor: "rgba(55,71,79,.1)", fill: true, borderWidth: 2, pointRadius: 2 }] },
+  options: {
+    animation: false, responsive: true,
+    scales: {
+      x: { title: { display: true, text: "Day" }, ticks: { maxTicksLimit: 10 } },
+      y: { min: 0, max: 1, title: { display: true, text: "Visit rate" } }
+    },
+    plugins: { legend: { display: false } }
+  }
+});
+const chartBar = new Chart(document.getElementById("chart-bar"), {
+  type: "bar",
+  data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
+  options: {
+    animation: false, responsive: true,
+    scales: {
+      y: { min: 0, max: 1, title: { display: true, text: "Accuracy" } }
+    },
+    plugins: { legend: { display: false } }
+  }
+});
+
+// ── Init segments ───────────────────────────────────────────────────────
+function initSegments(segs) {
+  if (segOrder.length) return;
+  segOrder = [...segs].sort();
+  segOrder.forEach(seg => {
+    accData[seg]   = [];
+    visitData[seg] = [];
+
+    // line chart datasets
+    const ds = (color) => ({
+      label: seg, data: [], borderColor: color, backgroundColor: color + "22",
+      borderWidth: 2, pointRadius: 2, tension: 0.3
+    });
+    chartAcc.data.datasets.push(ds(segColor(seg)));
+    chartVR.data.datasets.push(ds(segColor(seg)));
+  });
+  chartAcc.update("none");
+  chartVR.update("none");
+  buildSegCards();
+}
+
+// ── Segment cards ───────────────────────────────────────────────────────
+function buildSegCards() {
+  const wrap = document.getElementById("seg-cards");
+  wrap.innerHTML = "";
+  segOrder.forEach(seg => {
+    const div = document.createElement("div");
+    div.className = "seg-card";
+    div.id = `card-${seg}`;
+    div.style.borderTopColor = segColor(seg);
+    div.innerHTML = `
+      <div class="seg-name">${seg}</div>
+      <div class="seg-acc" id="acc-${seg}">—</div>
+      <div class="seg-count" id="count-${seg}">— / — visited</div>
+      <div class="seg-hook" id="hook-${seg}">—</div>`;
+    wrap.appendChild(div);
+  });
+}
+
+function updateSegCard(seg, acc, visited, total, hook) {
+  const accEl = document.getElementById(`acc-${seg}`);
+  if (accEl) accEl.textContent = (acc * 100).toFixed(1) + "%";
+  const countEl = document.getElementById(`count-${seg}`);
+  if (countEl) countEl.textContent = `${visited} / ${total} visited`;
+  const hookEl = document.getElementById(`hook-${seg}`);
+  if (hookEl) hookEl.textContent = hook ? (hook.length > 60 ? hook.slice(0, 60) + "…" : hook) : "—";
+}
+
+// ── Update charts ────────────────────────────────────────────────────────
+function pushSnapshot(snap) {
+  const day = snap.day_number ?? days.length;
+  days.push(day);
+
+  chartAcc.data.labels = days;
+  chartVR.data.labels  = days;
+  chartOvr.data.labels = days;
+
+  const segAcc   = snap.segment_accuracy        || {};
+  const segVisit = snap.segment_visit_metrics   || {};
+  const curHooks = snap.current_hooks           || {};
+
+  segOrder.forEach((seg, i) => {
+    const acc = segAcc[seg] ?? NaN;
+    const vr  = (segVisit[seg] || {}).visit_rate ?? NaN;
+    accData[seg].push(acc);
+    visitData[seg].push(vr);
+    chartAcc.data.datasets[i].data = accData[seg];
+    chartVR.data.datasets[i].data  = visitData[seg];
+    updateSegCard(
+      seg, acc,
+      (segVisit[seg] || {}).visited_customers ?? 0,
+      (segVisit[seg] || {}).total_customers   ?? 0,
+      curHooks[seg] || ""
+    );
+  });
+
+  const overall = (snap.daily_metrics || {}).visit_rate ?? NaN;
+  overallData.push(overall);
+  chartOvr.data.datasets[0].data = overallData;
+
+  // bar chart — always latest accuracy
+  chartBar.data.labels = segOrder;
+  chartBar.data.datasets[0].data = segOrder.map(s => segAcc[s] ?? 0);
+  chartBar.data.datasets[0].backgroundColor = segOrder.map(s => segColor(s));
+
+  chartAcc.update("none");
+  chartVR.update("none");
+  chartOvr.update("none");
+  chartBar.update("none");
+
+  // progress bar
+  const pct = TOTAL_DAYS ? Math.min(day / TOTAL_DAYS * 100, 100) : 0;
+  document.getElementById("progress-bar").style.width = pct + "%";
+  document.getElementById("day-label").textContent = `Day ${day} / ${TOTAL_DAYS || "?"}`;
+  if (!isNaN(overall)) {
+    document.getElementById("visit-rate-label").textContent =
+      `Overall visit rate: ${(overall * 100).toFixed(1)}%`;
+  }
+
+  // best hooks
+  const hist = snap.historical_hooks_and_scores || [];
+  hist.forEach(entry => {
+    const s = entry.segment, sc = entry.accuracy_score, h = entry.hook;
+    if (!bestHooks[s] || sc > bestHooks[s].score) bestHooks[s] = { hook: h, score: sc };
+  });
+  refreshHooksTable();
+}
+
+function refreshHooksTable() {
+  const tbody = document.getElementById("hooks-tbody");
+  if (!Object.keys(bestHooks).length) return;
+  tbody.innerHTML = Object.entries(bestHooks)
+    .sort(([a],[b]) => a.localeCompare(b))
+    .map(([seg, {hook, score}]) => `
+      <tr>
+        <td><b style="color:${segColor(seg)}">${seg}</b></td>
+        <td>${hook}</td>
+        <td><span class="score-pill">${score.toFixed(3)}</span></td>
+      </tr>`).join("");
+}
+
+// ── SSE ──────────────────────────────────────────────────────────────────
+let es = null;
+
+function connectStream() {
+  es = new EventSource("/stream");
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === "ping") return;
+
+    if (data.type === "snapshot") {
+      const segs = Object.keys(data.segment_accuracy || data.current_hooks || {});
+      if (segs.length && !segOrder.length) initSegments(segs);
+      if (segOrder.length) pushSnapshot(data);
+
+    } else if (data.type === "done") {
+      document.getElementById("progress-bar").style.width = "100%";
+      document.getElementById("progress-bar").style.background = "#48bb78";
+      document.getElementById("day-label").textContent = `Done ✓`;
+      document.getElementById("status-bar").textContent = "Simulation complete.";
+      document.getElementById("run-btn").disabled = false;
+      document.getElementById("run-btn").textContent = "▶ Run Again";
+      es.close();
+
+    } else if (data.type === "error") {
+      document.getElementById("status-bar").textContent = "Error: " + data.message;
+      document.getElementById("run-btn").disabled = false;
+      es.close();
+    }
+  };
+}
+
+// ── Start ────────────────────────────────────────────────────────────────
+function startSim() {
+  document.getElementById("run-btn").disabled = true;
+  document.getElementById("run-btn").textContent = "Running…";
+  document.getElementById("status-bar").textContent = "Simulation running…";
+
+  // Reset state
+  days = []; segOrder = []; accData = {}; visitData = {}; overallData = []; bestHooks = {};
+  [chartAcc, chartVR, chartOvr, chartBar].forEach(c => {
+    c.data.labels = []; c.data.datasets.forEach(d => d.data = []); c.update("none");
+  });
+  chartAcc.data.datasets = [];
+  chartVR.data.datasets  = [];
+  document.getElementById("seg-cards").innerHTML = "";
+  document.getElementById("hooks-tbody").innerHTML = "<tr><td colspan='3' style='color:#a0aec0'>Waiting…</td></tr>";
+  document.getElementById("progress-bar").style.background = "#4f46e5";
+  document.getElementById("progress-bar").style.width = "0%";
+
+  if (es) es.close();
+  connectStream();
+
+  fetch("/start", { method: "POST" })
+    .catch(() => {
+      document.getElementById("status-bar").textContent = "Failed to start simulation.";
+      document.getElementById("run-btn").disabled = false;
+    });
+}
+</script>
+</body>
+</html>
