@@ -326,7 +326,7 @@ class MarketingSession:
             raise ValueError("Score must be between -1.0 and 1.0")
         score = max(score, 0)
         new_proba = score * self.proba_update_factor
-        
+
         # Clamp the new probability between 0.0 and 1.0
         new_proba = max(0.0, min(1.0, new_proba))
         

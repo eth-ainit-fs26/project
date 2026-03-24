@@ -61,8 +61,8 @@ class LlamaFileProvider(LLMProvider):
             self._initialize_model()
         
         # Extract parameters with defaults
-        max_tokens = kwargs.get('max_tokens', 200)
-        temperature = kwargs.get('temperature', 0.7)
+        max_tokens = kwargs.get('max_tokens', 60)
+        temperature = kwargs.get('temperature', 0.3)
         
         # Create messages format for chat completion
         messages = [{"role": "user", "content": prompt}]
