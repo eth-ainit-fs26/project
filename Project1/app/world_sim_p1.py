@@ -156,20 +156,15 @@ class WorldSimulatorP1:
         while self.current_simulation_day <= self.simulation_duration:
             if self.logging_config.daily_progress:
                 print(f"Running simulation day {self.current_simulation_day}/{self.simulation_duration}")
+            
+            # Capture the day BEFORE the step advances it
+            day_just_simulated = self.current_simulation_day
+            
             self.runSimulationStep()
 
-
-            if self.current_simulation_day % self.opro_cycle_days == 0 and self.current_simulation_day > self.opro_cycle_days:
-                progress_function(self.snapshot_day())
-                #print(self.snapshot_day())
-
-
-        # Capture final day's data for OPRO history
-        self._capture_final_day_opro_data()
-        
-        # Print all OPRO optimization history at the end
-        if self.logging_config.final_history:
-            self.print_opro_optimization_history()
+            # Report after every cycle (including the first one)
+            if day_just_simulated % self.opro_cycle_days == 0:
+                progress_function(self.snapshot_day(day_just_simulated))
     
     def _capture_final_day_opro_data(self):
         """
