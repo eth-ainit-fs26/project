@@ -135,11 +135,12 @@ _DASHBOARD_HTML = """
 
   // ── main update ──────────────────────────────────────────────────────
   window.updateSim = function(snap) {{
-    const bestAcc   = snap.best_segment_accuracy || {{}};
-    const bestHookSnap = snap.best_segment_hooks || {{}};
-    const day       = snap.day_number ?? days.length;
+    const segAcc      = snap.segment_accuracy      || {{}};
+    const bestAcc     = snap.best_segment_accuracy || {{}};
+    const curHooks    = snap.current_hooks         || {{}};
+    const day         = snap.day_number ?? days.length;
 
-    const segNames = Object.keys(bestAcc);
+    const segNames = Object.keys(segAcc);
     if (segNames.length && !segs.length) initSegs(segNames);
     if (!segs.length) return;
 
@@ -159,9 +160,9 @@ _DASHBOARD_HTML = """
     document.getElementById("sim-bar").style.width = pct+"%";
     document.getElementById("sim-day-label").textContent = "Day "+day+" / "+(TOTAL||"?");
 
-    // best hooks — driven directly by server-side tracking
+    // current hooks — update every cycle so the table always reflects what's being tried
     const tbody = document.getElementById("sim-hooks-body");
-    const hookEntries = Object.entries(bestHookSnap).filter(([,h]) => h);
+    const hookEntries = Object.entries(curHooks).filter(([,h]) => h);
     if (hookEntries.length) {{
       tbody.innerHTML = hookEntries
         .sort(([a],[b]) => a.localeCompare(b))
