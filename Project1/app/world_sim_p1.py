@@ -412,50 +412,48 @@ class WorldSimulatorP1:
     
     def calculate_segment_hook_accuracy(self, day_number: Optional[int] = None) -> Dict[str, float]:
         """
-        Calculate hook accuracy for each customer segment based on shop visit rates.
-        
-        Accuracy is defined as: (number of customers in segment who visited) / (total customers in segment)
-        
+        For each customer segment, calculate what fraction of customers visited the shop today.
+
+        A score of 1.0 means every customer in that segment visited.
+        A score of 0.0 means nobody visited.
+        This is used as a signal for how well the marketing hook worked for that segment.
+
         Args:
             day_number: Simulation day (defaults to current day)
-            
+
         Returns:
-            Dict[str, float]: Dictionary mapping segment to accuracy score (0.0-1.0)
+            Dict[str, float]: e.g. {'H': 0.8, 'N': 0.4, ...}  (values between 0.0 and 1.0)
         """
         if day_number is None:
             day_number = self.current_simulation_day
-        
-        # Get all customers grouped by segment
+
+        # Step 1 — load every customer and group them by their segment label (e.g. 'H', 'N', 'R')
         all_customers = self.customer_registry.get_all_customers()
         segment_counts = {}
-        
-        # Count total customers per segment
         for customer in all_customers:
             segment = customer.segment
             if segment not in segment_counts:
+                # First time we see this segment: start both counters at zero
                 segment_counts[segment] = {'total': 0, 'visited': 0}
             segment_counts[segment]['total'] += 1
-        
-        # Get all shop visits for the day
+
+        # Step 2 — find out which customers actually visited the shop today
         shop_visits = self.shop_component.get_visits_for_day(day_number)
-        visited_customer_ids = {visit.cid for visit in shop_visits}
-        
-        # Count customers who visited per segment
+        visited_customer_ids = {visit.cid for visit in shop_visits}  # a fast lookup set
+
+        # Step 3 — for each customer who visited, add 1 to their segment's visited counter
         for customer in all_customers:
             if customer.cid in visited_customer_ids:
-                segment = customer.segment
-                if segment in segment_counts:
-                    segment_counts[segment]['visited'] += 1
-        
-        # Calculate accuracy scores
+                segment_counts[customer.segment]['visited'] += 1
+
+        # Step 4 — turn the raw counts into a percentage (visited / total) for each segment
         segment_accuracy = {}
         for segment, counts in segment_counts.items():
             if counts['total'] > 0:
-                accuracy = counts['visited'] / counts['total']
-                segment_accuracy[segment] = accuracy
+                segment_accuracy[segment] = counts['visited'] / counts['total']
             else:
                 segment_accuracy[segment] = 0.0
-        
+
         return segment_accuracy
     
     def debug_segment_accuracy(self, day_number: Optional[int] = None) -> Dict[str, Any]:
