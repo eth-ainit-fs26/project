@@ -153,6 +153,9 @@ class WorldSimulatorP1:
 
         # Running best: monotonically non-decreasing best accuracy per segment
         self.best_segment_accuracy: Dict[str, float] = {}
+        # The prompt/hook that produced the best accuracy for each segment
+        self.best_segment_prompts: Dict[str, str] = {}
+        self.best_segment_hooks: Dict[str, str] = {}
     
     def reset(self):
         """Reset simulation state so the dashboard can be re-run cleanly."""
@@ -168,6 +171,8 @@ class WorldSimulatorP1:
         self.previous_cycle_average_accuracy = {}
         self.cycle_count = 0
         self.best_segment_accuracy = {}
+        self.best_segment_prompts = {}
+        self.best_segment_hooks = {}
         # Clear shop visits and marketing operations from the previous run
         from models.models import MarketingOperation
         from models.registries import marketing_operation_registry
@@ -401,8 +406,11 @@ class WorldSimulatorP1:
                         if self.logging_config.opro_prompts:
                             print(f"     • {segment}: adopted new prompt (score {current_score:.3f} >= best {self.best_segment_accuracy.get(segment, 0.0):.3f}): {prompt[:100]}...")
                     else:
+                        # Revert to the prompt that achieved the best score so far
+                        if segment in self.best_segment_prompts:
+                            self.optimized_prompts[segment] = self.best_segment_prompts[segment]
                         if self.logging_config.opro_prompts:
-                            print(f"     • {segment}: kept previous prompt (score {current_score:.3f} < best {self.best_segment_accuracy.get(segment, 0.0):.3f})")
+                            print(f"     • {segment}: reverted to best prompt (score {current_score:.3f} < best {self.best_segment_accuracy.get(segment, 0.0):.3f})")
             else:
                 if self.logging_config.opro_optimization:
                     print(f"ℹ️  Skipping OPRO optimization (Cycle {self.cycle_count} - need previous cycle data)")
@@ -414,6 +422,8 @@ class WorldSimulatorP1:
             for segment, accuracy in cycle_average_accuracies.items():
                 if accuracy > self.best_segment_accuracy.get(segment, -1.0):
                     self.best_segment_accuracy[segment] = accuracy
+                    self.best_segment_prompts[segment] = self.optimized_prompts[segment]
+                    self.best_segment_hooks[segment] = self.current_hooks.get(segment, "")
             
             # Reset for next cycle
             self.current_cycle_accuracies = []
@@ -900,6 +910,7 @@ class WorldSimulatorP1:
             'current_prompts': current_prompts,
             'historical_hooks_and_scores': historical_hooks,
             'best_segment_accuracy': self.best_segment_accuracy.copy(),
+        'best_segment_hooks': self.best_segment_hooks.copy(),
         'opro_data': {
                 'total_optimization_entries': len(self.opro_optimization_history),
                 'current_cycle_accuracies_count': len(self.current_cycle_accuracies),

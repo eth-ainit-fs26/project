@@ -100,7 +100,7 @@ _DASHBOARD_HTML = """
   const TOTAL  = {total_days};
   function c(s) {{ return COLORS[s] || "#607D8B"; }}
 
-  let days=[], segs=[], bestHooks={{}}, bestAccD={{}};
+  let days=[], segs=[], bestAccD={{}};
 
   // ── charts ──────────────────────────────────────────────────────────
   function lineChart(id) {{
@@ -135,9 +135,9 @@ _DASHBOARD_HTML = """
 
   // ── main update ──────────────────────────────────────────────────────
   window.updateSim = function(snap) {{
-    const bestAcc  = snap.best_segment_accuracy  || {{}};
-    const hist     = snap.historical_hooks_and_scores || [];
-    const day      = snap.day_number ?? days.length;
+    const bestAcc   = snap.best_segment_accuracy || {{}};
+    const bestHookSnap = snap.best_segment_hooks || {{}};
+    const day       = snap.day_number ?? days.length;
 
     const segNames = Object.keys(bestAcc);
     if (segNames.length && !segs.length) initSegs(segNames);
@@ -159,19 +159,18 @@ _DASHBOARD_HTML = """
     document.getElementById("sim-bar").style.width = pct+"%";
     document.getElementById("sim-day-label").textContent = "Day "+day+" / "+(TOTAL||"?");
 
-    // best hooks
-    hist.forEach(e => {{
-      if (!bestHooks[e.segment] || e.accuracy_score > bestHooks[e.segment].score)
-        bestHooks[e.segment] = {{hook:e.hook, score:e.accuracy_score}};
-    }});
+    // best hooks — driven directly by server-side tracking
     const tbody = document.getElementById("sim-hooks-body");
-    tbody.innerHTML = Object.entries(bestHooks)
-      .sort(([a],[b])=>a.localeCompare(b))
-      .map(([s,{{hook,score}}])=>`<tr>
-        <td><b style="color:${{c(s)}}">${{s}}</b></td>
-        <td>${{hook}}</td>
-        <td><span class="sim-pill">${{score.toFixed(3)}}</span></td>
-      </tr>`).join("");
+    const hookEntries = Object.entries(bestHookSnap).filter(([,h]) => h);
+    if (hookEntries.length) {{
+      tbody.innerHTML = hookEntries
+        .sort(([a],[b]) => a.localeCompare(b))
+        .map(([s, hook]) => `<tr>
+          <td><b style="color:${{c(s)}}">${{s}}</b></td>
+          <td>${{hook}}</td>
+          <td><span class="sim-pill">${{(bestAcc[s]||0).toFixed(3)}}</span></td>
+        </tr>`).join("");
+    }}
   }};
 
   window.simDone = function() {{
