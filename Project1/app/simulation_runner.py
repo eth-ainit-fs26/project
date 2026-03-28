@@ -30,11 +30,7 @@ _DASHBOARD_HTML = """
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background: #f5f7fa; color: #2d3748; padding: 16px; border-radius: 12px;
   }}
-  #sim-dash header {{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }}
-  #sim-dash h1 {{ font-size:1.3rem; font-weight:700; }}
-  #sim-dash .meta {{ font-size:0.8rem; color:#718096; margin-top:3px; }}
-  #sim-dash .meta span {{ margin-right:12px; }}
-  #sim-progress-wrap {{
+#sim-progress-wrap {{
     display:flex; align-items:center; gap:12px;
     background:white; border-radius:8px; padding:10px 14px;
     margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.08);
@@ -42,28 +38,18 @@ _DASHBOARD_HTML = """
   #sim-day-label {{ font-size:0.82rem; min-width:95px; font-variant-numeric:tabular-nums; }}
   #sim-bar-wrap {{ flex:1; background:#e2e8f0; border-radius:6px; height:9px; overflow:hidden; }}
   #sim-bar {{ height:100%; width:0%; background:#4f46e5; border-radius:6px; transition:width .3s; }}
-  #sim-vr-label {{ font-size:0.82rem; min-width:160px; text-align:right; }}
-  #sim-cards {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }}
-  .sim-card {{
-    background:white; border-radius:8px; padding:10px 14px; flex:1; min-width:120px;
-    box-shadow:0 1px 3px rgba(0,0,0,.08); border-top:4px solid #ccc;
-  }}
-  .sim-card-name  {{ font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#718096; }}
-  .sim-card-acc   {{ font-size:1.7rem; font-weight:800; line-height:1.1; }}
-  .sim-card-count {{ font-size:0.72rem; color:#a0aec0; margin-top:2px; }}
-  .sim-card-hook  {{ font-size:0.68rem; color:#718096; margin-top:5px; font-style:italic; line-height:1.3; }}
-  #sim-charts {{
-    display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;
+#sim-charts {{
+    display:grid; grid-template-columns:1fr; gap:10px; margin-bottom:12px;
   }}
   .sim-chart-card {{
     background:white; border-radius:8px; padding:12px 14px;
-    box-shadow:0 1px 3px rgba(0,0,0,.08);
+    box-shadow:0 1px 3px rgba(0,0,0,.08); margin-top:16px;
   }}
   .sim-chart-card h3 {{
-    font-size:0.72rem; font-weight:600; color:#718096; margin-bottom:8px;
-    text-transform:uppercase; letter-spacing:.05em;
+    font-size:0.72rem; font-weight:600; color:#718096; margin-top:10px; margin-bottom:8px;
+    text-transform:uppercase; letter-spacing:.05em; text-align:center;
   }}
-  .sim-chart-card canvas {{ max-height:170px; }}
+  .sim-chart-card canvas {{ max-height:340px; }}
   #sim-hooks-section {{
     background:white; border-radius:8px; padding:12px 14px;
     box-shadow:0 1px 3px rgba(0,0,0,.08);
@@ -89,30 +75,13 @@ _DASHBOARD_HTML = """
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <div id="sim-dash">
-  <header>
-    <div>
-      <h1>AI Marketing Simulation</h1>
-      <div class="meta">
-        <span>Mode: <b>{mode}</b></span>
-        <span>Duration: <b>{total_days} days</b></span>
-        <span>OPRO every <b>{opro_cycle} days</b></span>
-      </div>
-    </div>
-  </header>
-
   <div id="sim-progress-wrap">
     <span id="sim-day-label">Day 0 / {total_days}</span>
     <div id="sim-bar-wrap"><div id="sim-bar"></div></div>
-    <span id="sim-vr-label">Overall visit rate: —</span>
   </div>
 
-  <div id="sim-cards"></div>
-
   <div id="sim-charts">
-    <div class="sim-chart-card"><h3>Accuracy per segment</h3><canvas id="sim-c-acc"></canvas></div>
-    <div class="sim-chart-card"><h3>Visit rate per segment</h3><canvas id="sim-c-vr"></canvas></div>
-    <div class="sim-chart-card"><h3>Overall visit rate</h3><canvas id="sim-c-ovr"></canvas></div>
-    <div class="sim-chart-card"><h3>Final accuracy (bar)</h3><canvas id="sim-c-bar"></canvas></div>
+    <div class="sim-chart-card"><canvas id="sim-c-acc"></canvas></div>
   </div>
 
   <div id="sim-hooks-section">
@@ -131,7 +100,7 @@ _DASHBOARD_HTML = """
   const TOTAL  = {total_days};
   function c(s) {{ return COLORS[s] || "#607D8B"; }}
 
-  let days=[], segs=[], accD={{}}, vrD={{}}, ovrD=[], bestHooks={{}};
+  let days=[], segs=[], bestHooks={{}}, bestAccD={{}};
 
   // ── charts ──────────────────────────────────────────────────────────
   function lineChart(id) {{
@@ -143,108 +112,52 @@ _DASHBOARD_HTML = """
           x:{{title:{{display:true,text:"Day"}}, ticks:{{maxTicksLimit:10}}}},
           y:{{min:0,max:1}}
         }},
-        plugins:{{legend:{{position:"bottom", labels:{{boxWidth:10,font:{{size:10}}}}}}}}
+        plugins:{{legend:{{display:false}}}}
       }}
     }});
   }}
 
   const cAcc = lineChart("sim-c-acc");
-  const cVR  = lineChart("sim-c-vr");
-  const cOvr = new Chart(document.getElementById("sim-c-ovr"), {{
-    type:"line",
-    data:{{labels:[], datasets:[{{label:"Overall",data:[],borderColor:"#37474F",
-      backgroundColor:"rgba(55,71,79,.1)",fill:true,borderWidth:2,pointRadius:2}}]}},
-    options:{{animation:false,responsive:true,
-      scales:{{x:{{title:{{display:true,text:"Day"}},ticks:{{maxTicksLimit:10}}}},y:{{min:0,max:1}}}},
-      plugins:{{legend:{{display:false}}}}}}
-  }});
-  const cBar = new Chart(document.getElementById("sim-c-bar"), {{
-    type:"bar", data:{{labels:[],datasets:[{{data:[],backgroundColor:[]}}]}},
-    options:{{animation:false,responsive:true,
-      scales:{{y:{{min:0,max:1}}}},plugins:{{legend:{{display:false}}}}}}
-  }});
 
   // ── init segments ────────────────────────────────────────────────────
   function initSegs(names) {{
     if (segs.length) return;
     segs = [...names].sort();
     segs.forEach(s => {{
-      accD[s]=[]; vrD[s]=[];
-      const ds = color => ({{label:s,data:[],borderColor:color,backgroundColor:color+"22",
-        borderWidth:2,pointRadius:2,tension:.3}});
-      cAcc.data.datasets.push(ds(c(s)));
-      cVR.data.datasets.push(ds(c(s)));
+      bestAccD[s]=[];
+      const dsBest = color => ({{label:s,data:[],borderColor:color,backgroundColor:"transparent",
+        borderWidth:2,pointRadius:0,stepped:true,fill:false}});
+      cAcc.data.datasets.push(dsBest(c(s)));
     }});
-    buildCards();
-    cAcc.update("none"); cVR.update("none");
+    cAcc.update("none");
   }}
 
-  function buildCards() {{
-    const wrap = document.getElementById("sim-cards");
-    wrap.innerHTML = "";
-    segs.forEach(s => {{
-      wrap.innerHTML += `<div class="sim-card" id="card-${{s}}" style="border-top-color:${{c(s)}}">
-        <div class="sim-card-name">${{s}}</div>
-        <div class="sim-card-acc" id="cacc-${{s}}">—</div>
-        <div class="sim-card-count" id="ccnt-${{s}}">— / —</div>
-        <div class="sim-card-hook" id="chook-${{s}}">—</div>
-      </div>`;
-    }});
-  }}
-
-  function updateCard(s, acc, vis, tot, hook) {{
-    const a=document.getElementById("cacc-"+s);
-    if(a) a.textContent=(acc*100).toFixed(1)+"%";
-    const cnt=document.getElementById("ccnt-"+s);
-    if(cnt) cnt.textContent=vis+" / "+tot+" visited";
-    const h=document.getElementById("chook-"+s);
-    if(h) h.textContent=hook?(hook.length>58?hook.slice(0,58)+"…":hook):"—";
-  }}
 
   // ── main update ──────────────────────────────────────────────────────
   window.updateSim = function(snap) {{
-    const segAcc  = snap.segment_accuracy       || {{}};
-    const segVis  = snap.segment_visit_metrics  || {{}};
-    const curHooks= snap.current_hooks          || {{}};
-    const hist    = snap.historical_hooks_and_scores || [];
-    const day     = snap.day_number ?? days.length;
-    const overall = (snap.daily_metrics||{{}}).visit_rate ?? NaN;
+    const bestAcc  = snap.best_segment_accuracy  || {{}};
+    const hist     = snap.historical_hooks_and_scores || [];
+    const day      = snap.day_number ?? days.length;
 
-    const segNames = Object.keys(segAcc).length ? Object.keys(segAcc) : Object.keys(curHooks);
+    const segNames = Object.keys(bestAcc);
     if (segNames.length && !segs.length) initSegs(segNames);
     if (!segs.length) return;
 
     days.push(day);
-    cAcc.data.labels = days; cVR.data.labels = days; cOvr.data.labels = days;
+    cAcc.data.labels = days;
 
     segs.forEach((s,i) => {{
-      const acc = segAcc[s] ?? NaN;
-      const vr  = (segVis[s]||{{}}).visit_rate ?? NaN;
-      accD[s].push(acc); vrD[s].push(vr);
-      cAcc.data.datasets[i].data = accD[s];
-      cVR.data.datasets[i].data  = vrD[s];
-      updateCard(s, isNaN(acc)?0:acc,
-        (segVis[s]||{{}}).visited_customers??0,
-        (segVis[s]||{{}}).total_customers??0,
-        curHooks[s]||"");
+      const best = bestAcc[s] ?? (bestAccD[s].length ? bestAccD[s][bestAccD[s].length-1] : NaN);
+      bestAccD[s].push(best);
+      cAcc.data.datasets[i].data = bestAccD[s];
     }});
 
-    ovrD.push(overall);
-    cOvr.data.datasets[0].data = ovrD;
-    cBar.data.labels = segs;
-    cBar.data.datasets[0].data = segs.map(s => segAcc[s]??0);
-    cBar.data.datasets[0].backgroundColor = segs.map(s => c(s));
-
-    cAcc.update("none"); cVR.update("none");
-    cOvr.update("none"); cBar.update("none");
+    cAcc.update("none");
 
     // progress
     const pct = TOTAL ? Math.min(day/TOTAL*100,100) : 0;
     document.getElementById("sim-bar").style.width = pct+"%";
     document.getElementById("sim-day-label").textContent = "Day "+day+" / "+(TOTAL||"?");
-    if (!isNaN(overall))
-      document.getElementById("sim-vr-label").textContent =
-        "Overall visit rate: "+(overall*100).toFixed(1)+"%";
 
     // best hooks
     hist.forEach(e => {{
@@ -284,13 +197,9 @@ class SimulationDashboard:
         self.use_opro2_mode = use_opro2_mode
 
     def display(self):
-        mode       = "OPRO2" if self.use_opro2_mode else "OPRO"
         total_days = getattr(self.w, "simulation_duration", "?")
-        opro_cycle = getattr(self.w, "opro_cycle_days", "?")
         html = _DASHBOARD_HTML.format(
-            mode=mode,
             total_days=total_days,
-            opro_cycle=opro_cycle,
             seg_colors=json.dumps(SEG_COLORS),
         )
         display(HTML(html))

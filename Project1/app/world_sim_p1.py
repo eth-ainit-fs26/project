@@ -150,6 +150,9 @@ class WorldSimulatorP1:
         self.current_cycle_accuracies: List[Dict[str, float]] = []  # Store daily accuracies for current cycle
         self.previous_cycle_average_accuracy: Dict[str, float] = {}  # Average accuracy from previous cycle
         self.cycle_count = 0  # Track which cycle we're in
+
+        # Running best: monotonically non-decreasing best accuracy per segment
+        self.best_segment_accuracy: Dict[str, float] = {}
     
     def runSimulation(self, progress_function):
         """Run the complete simulation."""
@@ -162,9 +165,7 @@ class WorldSimulatorP1:
             
             self.runSimulationStep()
 
-            # Report after every cycle (including the first one)
-            if day_just_simulated % self.opro_cycle_days == 0:
-                progress_function(self.snapshot_day(day_just_simulated))
+            progress_function(self.snapshot_day(day_just_simulated))
     
     def _capture_final_day_opro_data(self):
         """
@@ -367,18 +368,27 @@ class WorldSimulatorP1:
                     logging_config=self.logging_config
                 )
                 
-                # Update optimized prompts for next cycle
-                self.optimized_prompts.update(new_optimized_prompts)
-                if self.logging_config.opro_prompts:
-                    print(f"   New optimized prompts for next cycle:")
-                    for segment, prompt in new_optimized_prompts.items():
-                        print(f"     • {segment}: {prompt[:100]}...")
+                # Only adopt a new prompt if this cycle's score beats the running best
+                for segment, prompt in new_optimized_prompts.items():
+                    current_score = cycle_average_accuracies.get(segment, 0.0)
+                    if current_score >= self.best_segment_accuracy.get(segment, -1.0):
+                        self.optimized_prompts[segment] = prompt
+                        if self.logging_config.opro_prompts:
+                            print(f"     • {segment}: adopted new prompt (score {current_score:.3f} >= best {self.best_segment_accuracy.get(segment, 0.0):.3f}): {prompt[:100]}...")
+                    else:
+                        if self.logging_config.opro_prompts:
+                            print(f"     • {segment}: kept previous prompt (score {current_score:.3f} < best {self.best_segment_accuracy.get(segment, 0.0):.3f})")
             else:
                 if self.logging_config.opro_optimization:
                     print(f"ℹ️  Skipping OPRO optimization (Cycle {self.cycle_count} - need previous cycle data)")
             
             # Store current cycle's average as previous cycle for next iteration
             self.previous_cycle_average_accuracy = cycle_average_accuracies.copy()
+
+            # Update running best (monotonically non-decreasing)
+            for segment, accuracy in cycle_average_accuracies.items():
+                if accuracy > self.best_segment_accuracy.get(segment, -1.0):
+                    self.best_segment_accuracy[segment] = accuracy
             
             # Reset for next cycle
             self.current_cycle_accuracies = []
@@ -786,16 +796,8 @@ class WorldSimulatorP1:
         if day_number is None:
             day_number = self.current_simulation_day
         
-        # Get segment accuracy using the same data source as historical table
-        # Use the most recent completed cycle averages from previous_cycle_average_accuracy
-        # This ensures consistency with the historical_hooks_and_scores table
-        if self.previous_cycle_average_accuracy:
-            # Use the last completed cycle's averages
-            segment_accuracy = self.previous_cycle_average_accuracy.copy()
-        else:
-            # Fallback: if no previous cycle data exists, use current calculation
-            # This handles the first cycle case
-            segment_accuracy = self.calculate_cycle_average_accuracy()
+        # Use actual per-day accuracy for day-by-day dashboard updates
+        segment_accuracy = self.calculate_segment_hook_accuracy(day_number)
         
         # Get current hooks for each segment
         current_hooks_snapshot = self.current_hooks.copy() if self.current_hooks else {}
@@ -874,7 +876,8 @@ class WorldSimulatorP1:
             'current_hooks': current_hooks_snapshot,
             'current_prompts': current_prompts,
             'historical_hooks_and_scores': historical_hooks,
-            'opro_data': {
+            'best_segment_accuracy': self.best_segment_accuracy.copy(),
+        'opro_data': {
                 'total_optimization_entries': len(self.opro_optimization_history),
                 'current_cycle_accuracies_count': len(self.current_cycle_accuracies),
                 'previous_cycle_average_accuracy': self.previous_cycle_average_accuracy.copy() if self.previous_cycle_average_accuracy else {}
