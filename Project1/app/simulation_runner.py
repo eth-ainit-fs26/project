@@ -206,6 +206,7 @@ class SimulationDashboard:
 
     def run(self):
         try:
+            self.w.reset()
             self.w.runSimulation(self._on_progress)
             display(Javascript("if(window.simDone) simDone();"))
         except NotImplementedError as e:

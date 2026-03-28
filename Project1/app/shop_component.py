@@ -183,6 +183,11 @@ class ShopComponent:
         
         return transaction
     
+    def reset(self):
+        """Reset day counter and clear all shop visit records for a fresh run."""
+        self.current_simulation_day = 1
+        shop_visit_registry.clear_all_visits()
+
     def advance_simulation_day(self):
         """Advance the simulation to the next day."""
         self.current_simulation_day += 1

@@ -267,6 +267,9 @@ class ShopVisitRegistry:
                 .where(ShopVisit.day_number == day_number)
                 .distinct()).count()
 
+    def clear_all_visits(self):
+        ShopVisit.delete().execute()
+
 
 shop_visit_registry = ShopVisitRegistry()
 

@@ -154,6 +154,31 @@ class WorldSimulatorP1:
         # Running best: monotonically non-decreasing best accuracy per segment
         self.best_segment_accuracy: Dict[str, float] = {}
     
+    def reset(self):
+        """Reset simulation state so the dashboard can be re-run cleanly."""
+        self.current_simulation_day = 1
+        self.current_hooks = {}
+        self.current_hook_embeddings = {}
+        self.previous_segment_scores = {}
+        self.previous_segment_prompts = {}
+        self.previous_segment_hooks = {}
+        self.opro_optimization_history = []
+        self.previous_day_segment_accuracy = {}
+        self.current_cycle_accuracies = []
+        self.previous_cycle_average_accuracy = {}
+        self.cycle_count = 0
+        self.best_segment_accuracy = {}
+        # Clear shop visits and marketing operations from the previous run
+        from models.models import MarketingOperation
+        from models.registries import marketing_operation_registry
+        try:
+            MarketingOperation.delete().execute()
+        except Exception:
+            pass
+        marketing_operation_registry.clear_all_operations()
+        self._marketing_operation_counter = 0
+        self.shop_component.reset()
+
     def runSimulation(self, progress_function):
         """Run the complete simulation."""
         while self.current_simulation_day <= self.simulation_duration:
