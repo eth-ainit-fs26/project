@@ -3,7 +3,6 @@ numpy>=1.24.0
 pandas>=2.0.0
 mypy>=1.0.0
 sentence-transformers==5.1.1
-torch==2.6.0
 huggingface-hub==0.35.3
 llama_cpp_python==0.3.16
 matplotlib==3.10.6
