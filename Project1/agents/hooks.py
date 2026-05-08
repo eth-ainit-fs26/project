@@ -2,7 +2,6 @@
 Marketing hook data and quality evaluation utilities.
 """
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from typing import Dict, Union, Any
 
 from models.models import CustomerSegment
@@ -84,6 +83,7 @@ class HookEvaluator:
     """
 
     def __init__(self, optimal_hooks: Dict[str, str], model_name: str = 'all-MiniLM-L6-v2'):
+        from sentence_transformers import SentenceTransformer
         self.encoder = SentenceTransformer(model_name)
         self.optimal_hooks = optimal_hooks.copy()
         if "Default" not in self.optimal_hooks:
