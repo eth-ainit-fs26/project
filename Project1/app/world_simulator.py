@@ -232,8 +232,9 @@ class WorldSimulator:
             tid=tid,
             cid=customer_id,
             date=date.today(),
-            order=order,
-            delivery_time_window=(None, None)  # Simplified for now
+            order_data=order,
+            delivery_time_window_start=0,
+            delivery_time_window_end=0,
         )
 
     def _get_items_total_price(self, item_ids: list[int]) -> float:
