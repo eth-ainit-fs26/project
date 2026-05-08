@@ -4,6 +4,7 @@ from models.models import Transaction, ShopVisit
 from models.registries import TransactionRegistry
 from models.registries import shop_visit_registry
 import random
+from datetime import date
 from typing import Optional, List, Any
 
 
@@ -168,17 +169,17 @@ class ShopComponent:
             order.append((item_id, quantity, item_price))
         
         # Generate delivery time window (simulation day + 1-7 days)
-        delivery_start_day = self.current_simulation_day + random.randint(1, 7)  # 1-7 days from current day
-        delivery_end_day = delivery_start_day + 1  # 1 day delivery window
-        delivery_time_window = (delivery_start_day, delivery_end_day)
-        
+        delivery_start_day = self.current_simulation_day + random.randint(1, 7)
+        delivery_end_day = delivery_start_day + 1
+
         # Create Transaction object
         transaction = Transaction(
             tid=tid or 0,
             cid=customer.cid,
-            simulation_day=self.current_simulation_day,
-            order=order,
-            delivery_time_window=delivery_time_window
+            date=date.today(),
+            order_data=order,
+            delivery_time_window_start=delivery_start_day,
+            delivery_time_window_end=delivery_end_day
         )
         
         return transaction
