@@ -251,7 +251,10 @@ def analyze_and_plot_kappa_prediction_quality(agent, customer_ids, item_ids, tru
     print(f"Predicted range: [{predictions.min():.3f}, {predictions.max():.3f}]")
     print(f"True range:      [{truth.min():.3f}, {truth.max():.3f}]")
 
-    plot_kappa_prediction_quality(truth, predictions, correlation, mse)
+    try:
+        plot_kappa_prediction_quality(truth, predictions, correlation, mse)
+    except Exception as e:
+        print(f"(Plot skipped: {e})")
     return correlation, mse
 
 
