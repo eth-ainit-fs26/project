@@ -1,0 +1,333 @@
+
+"""
+The MIT License
+
+Copyright (c) 2020 Yeong-Dae Kwon
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+"""
+
+
+import logging
+import os
+import datetime
+import pytz
+import re
+
+import numpy as np
+import torch
+from typing import List, Literal
+import matplotlib.colors as colors
+import matplotlib.pyplot as plt
+from matplotlib import ticker
+
+########################################
+# Get_Logger
+########################################
+tz = pytz.timezone("Europe/Zurich")
+
+def timetz(*args):
+    return datetime.datetime.now(tz).timetuple()
+
+def Get_Logger(SAVE_FOLDER_NAME):
+    # make_dir
+    #######################################################
+    prefix = datetime.datetime.now(pytz.timezone("Europe/Zurich")).strftime("%Y%m%d_%H%M__")
+    result_folder_no_postfix = "./result/{}".format(prefix + SAVE_FOLDER_NAME)
+
+    result_folder_path = result_folder_no_postfix
+    folder_idx = 0
+    while os.path.exists(result_folder_path):
+        folder_idx += 1
+        result_folder_path = result_folder_no_postfix + "({})".format(folder_idx)
+
+    os.makedirs(result_folder_path)
+
+    # Logger
+    #######################################################
+    logger = logging.getLogger(result_folder_path) 
+
+    streamHandler = logging.StreamHandler()
+    fileHandler = logging.FileHandler('{}/log.txt'.format(result_folder_path))
+
+    formatter = logging.Formatter("[%(asctime)s] %(message)s", "%Y-%m-%d %H:%M:%S")
+    formatter.converter = timetz
+
+    streamHandler.setFormatter(formatter)
+    fileHandler.setFormatter(formatter)
+
+    logger.addHandler(streamHandler)
+    logger.addHandler(fileHandler)
+
+    logger.setLevel(level=logging.INFO)
+
+    return logger, result_folder_path
+
+def Extract_from_LogFile(result_folder_path, variable_name):
+    logfile_path = '{}/log.txt'.format(result_folder_path)
+    with open(logfile_path) as f:
+        datafile = f.readlines()
+    found = False  # This isn't really necessary
+    for line in reversed(datafile):
+        if variable_name in line:
+            found = True
+            m = re.search(variable_name + '[^\n]+', line)
+            break
+    exec_command = "Print(No such variable found !!)"
+    if found:
+        return m.group(0)
+    else:
+        return exec_command
+
+########################################
+# Average_Meter
+########################################
+class Average_Meter:
+ 
+    def __init__(self, device):
+        self.device = device
+        self.sum = None
+        self.count = None
+        self.reset()
+
+    def reset(self):
+        self.sum = torch.tensor(0.).to(self.device)
+        self.count = 0
+
+    def push(self, some_tensor, n_for_rank_0_tensor=None):
+        assert not some_tensor.requires_grad # You get Memory error, if you keep tensors with grad history
+        
+        rank = len(some_tensor.shape)
+
+        if rank == 0: # assuming "already averaged" Tensor was pushed
+            self.sum += some_tensor * n_for_rank_0_tensor
+            self.count += n_for_rank_0_tensor
+            
+        else:
+            self.sum += some_tensor.sum()
+            self.count += some_tensor.numel()
+
+    def peek(self):
+        average = (self.sum / self.count).tolist()
+        return average
+
+    def result(self):
+        average = (self.sum / self.count).tolist()
+        self.reset()
+        return average
+
+########################################
+# View NN Parameters
+########################################
+
+def get_n_params1(model):
+    pp = 0
+    for p in list(model.parameters()):
+        nn_count = 1
+        for s in list(p.size()):
+            nn_count = nn_count * s
+        pp += nn_count
+        print(nn_count)
+        print(p.shape)
+    print("Total: {:d}".format(pp))
+
+
+def get_n_params2(model):
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print(params)
+
+
+def get_n_params3(model):
+    print(sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+
+def get_structure(model):
+    print(model)
+
+########################################
+# Augment xy data
+########################################
+def augment_xy_data_by_8_fold(xy_data):
+    # xy_data.shape = (batch_s, problem, 2)
+
+    x = xy_data[:, :, [0]]
+    y = xy_data[:, :, [1]]
+    # x,y shape = (batch, problem, 1)
+    dat1 = torch.cat((x, y), dim=2)
+    dat2 = torch.cat((1-x, y), dim=2)
+    dat3 = torch.cat((x, 1-y), dim=2)
+    dat4 = torch.cat((1-x, 1-y), dim=2)
+    dat5 = torch.cat((y, x), dim=2)
+    dat6 = torch.cat((1-y, x), dim=2)
+    dat7 = torch.cat((y, 1-x), dim=2)
+    dat8 = torch.cat((1-y, 1-x), dim=2)
+
+    data_augmented = torch.cat((dat1, dat2, dat3, dat4, dat5, dat6, dat7, dat8), dim=0)
+    # shape = (8*batch, problem, 2)
+
+    return data_augmented
+
+def visiaulize_8_fold_augmentation():
+    num_points= 30
+    theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+    x, y = 0.4*np.cos(theta)+0.5, 0.4*np.sin(theta)+0.5
+    transforms = [
+        (lambda x,y: (x,y) , 'Original data'),
+        (lambda x,y: (1-x,y) , '(x,y) ↦ (1-x,y)'),
+        (lambda x,y: (x,1-y) , '(x,y) ↦ (x,1-y)'),
+        (lambda x,y: (1-x,1-y) , '(x,y) ↦ (1-x,1-y)'),
+        (lambda x,y: (y,x) , '(x,y) ↦ (y,x)'),
+        (lambda x,y: (1-y,x) , '(x,y) ↦ (1-y,x)'),
+        (lambda x,y: (y,1-x) , '(x,y) ↦ (y,1-x)'),
+        (lambda x,y: (1-y,1-x) , '(x,y) ↦ (1-y,x)'),
+    ]
+    
+    
+    fig, ax = plt.subplots(2,4, figsize = (10,6), sharex=True, sharey=True)
+    
+    for i, transformation in enumerate(transforms):
+        func, func_name = transformation
+        r, c = i//4, i%4
+        new_x, new_y = func(x,y)
+        ax[r][c].scatter(new_x, new_y, c=theta, cmap='inferno', s=50, edgecolor='k')
+        ax[r][c].set_aspect('equal', adjustable='box')
+        ax[r][c].set_xlim(0, 1)
+        ax[r][c].set_ylim(0, 1)
+        ax[r][c].grid(True, linestyle='--', alpha=0.5)
+        ax[r][c].set_title(func_name)
+    fig.suptitle('Eight-fold Data Augmentation', fontsize=18)
+    plt.tight_layout()
+
+
+
+#########################################
+# Visualizations
+##########################################
+from source.cvrp import MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS
+
+def visualize_solver_performance(solver_names: List[str], distances: List[List[float]], times: List[List[float]], 
+                                 n_instances_per_size: int, eval_seed: int, figsize=(20,4)):
+    ''' Visualize the performance of multiple solvers on CVRP instances.
+        Parameters:
+            solver_names (List[str]): List of solver names
+            distances (List[List[float]]): List of average distances per solver
+            times (List[List[float]]): List of average solving times per solver
+            n_instances_per_size (int): Number of instances evaluated per problem size
+            eval_seed (int): Seed used for dataset generation
+    '''
+    x_vals = range(MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS + 1)
+    distances, times = np.array(distances), np.array(times)
+
+    def plot_absolute_distances(ax: plt.Axes):
+        ''' Plot average distances for multiple solvers '''
+        for i, solver_name in enumerate(solver_names):
+            ax.plot(x_vals, distances[i], marker='o', label=solver_name, color=['b','y','r'][i])
+        ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Average Solution Cost (Total Tour Distance)')
+        ax.set_xticks(range(MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS + 1))
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax.set_title('Average Solution Cost', fontsize=16)
+        ax.legend(), ax.grid(True)
+
+    def plot_absolute_times(ax: plt.Axes):
+        for i, solver_name in enumerate(solver_names):
+            ax.plot(x_vals, times[i], marker='o', label=solver_name, color=['b','y','r'][i])
+        ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Average Solving Time (seconds)')
+        ax.set_xticks(x_vals), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax.set_title('Average Solving Time', fontsize=16)
+        ax.legend(), ax.grid(True)
+
+    def plot_relative_metrics(ax: plt.Axes, kind=Literal['time', 'distance']):
+        ''' Plot relative solution cost or solving times compared to a baseline solver, assumed to be the first solver '''
+        baseline_metric = times[0] if kind=='time' else distances[0]
+        assert (baseline_metric > 0).all(), f"Baseline {kind}s must be positive."
+        for i, solver_name in enumerate(solver_names[1:]):
+            metric = times[i+1] if kind=='time' else distances[i+1]
+            ax.plot(x_vals, metric / baseline_metric, marker='o', label=f'{kind.capitalize()}: {solver_name}', color=['y','r'][i])
+        ax.plot(x_vals, np.ones(len(x_vals)), '--', color='b', label='Baseline = 1', alpha=0.7) 
+        ax.set_xticks(x_vals), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Relative {kind.capitalize()} Performance (Baseline = 1)')
+        ax.legend()
+        ax.set_title(f'Average {kind.capitalize()} Ratio against Baseline', fontsize=16)
+        ax.grid(True)
+
+    def plot_relative_times_and_distances(ax: plt.Axes):
+        ''' Plot relative solution cost and solving times compared to a baseline solver, assumed to be the first solver '''
+        baseline_distnace, baseline_time = distances[0], times[0]
+        assert (baseline_distnace > 0).all(), "Baseline distances must be positive."
+        assert (baseline_time > 0).all(), "Baseline times must be positive."
+        for i, solver_name in enumerate(solver_names[1:]):
+            ax.plot(x_vals, distances[i+1] / baseline_distnace, marker='o', label=f'Cost: {solver_name}')
+        # ax.plot(x_vals, np.ones(len(x_vals)), '--', color='gray', label='Baseline = 1')  
+        ax.set_xticks(x_vals), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Relative Cost Performance (Baseline = 1)')
+
+        ax2 = ax.twinx()
+        for i, solver_name in enumerate(solver_names[1:]):
+            ax2.plot(x_vals, times[i+1] / baseline_time, marker='x', label=f'Time: {solver_name}')
+        # ax2.plot(x_vals, np.ones(len(x_vals)), '--', color='gray', label='Baseline = 1')
+        ax2.set_ylabel(f'Relative Time Performance (Baseline = 1)')
+        
+        
+        ax.legend(loc='upper left'), ax2.legend(loc='upper right')
+        ax.set_title('Relative Solution Cost and Solving Time (Ratio against Baseline)', fontsize=16)
+        ax.grid(True)
+
+    def plot_time_vs_distance_scatter(ax: plt.Axes):
+        n_cat = MAX_NUM_CUSTOMERS - MIN_NUM_CUSTOMERS + 1 # Number of categories for color mapping
+        bounds = np.arange(MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS + 1) - 0.5
+        cmap = plt.get_cmap('RdBu', n_cat) # viridis, magma, inferno, coolwarm, seismic, RdBu
+        norm = colors.BoundaryNorm(bounds, cmap.N)
+        markers = ['o', 'P', '*', 'D', 'X']  # Add more markers if needed
+        for i, solver_name in enumerate(solver_names):
+            scatter = ax.scatter(distances[i], times[i],  label=solver_name, marker=markers[i], c=range(MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS + 1), 
+                                    cmap=cmap, norm=norm, edgecolors='k', linewidths=0.5)
+        cbar = plt.colorbar(scatter, ticks=x_vals[::5])
+        cbar.set_label('# Customers', rotation=0, labelpad=-30, y=1.05)
+        ax.set_xlabel('Average Solution Cost (Total Tour Distance)'), ax.set_ylabel('Average Solving Time (seconds)')
+        ax.set_title('Distance vs Time', fontsize=16)
+        ax.legend(), ax.grid(True)
+
+
+    assert len(solver_names) == len(distances) == len(times), "Solver names, distances, and times length mismatch."
+    if len(solver_names)==1: # only one solver, plot only absolute distances and times
+        # fig, ax = plt.subplots(1,3, figsize=figsize)
+        # plot_absolute_distances(ax[0]) # plot average distances
+        # plot_absolute_times(ax[1]) # plot average solving times
+        # plot_time_vs_distance_scatter(ax[2]) # plot time vs distance scatter plot
+        fig, ax = plt.subplots(1,2, figsize=figsize)
+        plot_absolute_distances(ax[0]) # plot average distances
+        plot_absolute_times(ax[1]) # plot average solving times
+        # plot_time_vs_distance_scatter(ax[2]) # plot time vs distance scatter plot
+        plt.suptitle(f'Solver Performance on {n_instances_per_size} random CVRP instances (seed={eval_seed})', fontsize=22)
+        fig.tight_layout()
+    else:
+        fig, ax = plt.subplots(2,2, figsize=figsize)
+        plot_absolute_distances(ax[0][0]) # plot average distances
+        plot_absolute_times(ax[0][1]) # plot average solving times
+        plot_relative_metrics(ax[1][0], kind='distance') # plot relative distances
+        plot_relative_metrics(ax[1][1], kind='time') # plot relative times  
+        # plot_relative_times_and_distances(ax[1][0]) # plot relative distances
+        # plot_time_vs_distance_scatter(ax[1][1]) # plot time vs distance scatter plot
+        plt.suptitle(f'Solver Performance on {n_instances_per_size} random CVRP instances (seed={eval_seed})', fontsize=22)
+        fig.tight_layout()
+    
+    return fig

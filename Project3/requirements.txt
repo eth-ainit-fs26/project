@@ -1,0 +1,7 @@
+osmnx
+scikit-learn
+matplotlib
+folium>=0.12
+mapclassify
+ipykernel
+seaborn
