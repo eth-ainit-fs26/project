@@ -5,3 +5,7 @@ folium>=0.12
 mapclassify
 ipykernel
 seaborn
+ortools
+pytz
+tqdm
+torch==2.6.0
