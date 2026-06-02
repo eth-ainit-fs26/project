@@ -37,11 +37,12 @@ import torch
 from typing import List, Optional
 
 MAX_DEMAND_PER_CUSTOMER = 10
-MIN_NUM_CUSTOMERS = 5
+MIN_NUM_CUSTOMERS = 20 # 5
 MAX_NUM_CUSTOMERS = 40
-VEHICLE_CAPACITY = lambda n_cust: round( max(-n_cust**2/600 + 9/20*n_cust + 65/3, \
-                                    MAX_DEMAND_PER_CUSTOMER*1.1)) if n_cust<=100 \
-                                    else 50 # match POMO paper setting
+# VEHICLE_CAPACITY = lambda n_cust: round( max(-n_cust**2/600 + 9/20*n_cust + 65/3, \
+#                                     MAX_DEMAND_PER_CUSTOMER*1.1)) if n_cust<=100 \
+#                                     else 50 # match POMO paper setting
+VEHICLE_CAPACITY = lambda n_cust: 50
 # MU, SIGMA = 25, 6 # for sampling problem sizes around 25 customers
 
 
