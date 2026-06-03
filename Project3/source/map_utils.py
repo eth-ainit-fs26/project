@@ -12,7 +12,8 @@ from folium import plugins
 from pyproj import Transformer
 import shapely.geometry as sg
 from shapely.ops import substring
-
+import html
+import branca
 
 def generate_diverse_colors(n: int) -> List[str]:
     """
@@ -132,28 +133,29 @@ def prepare_zurich_environment(alpha=1e-4, beta=1e-3):
     print("Environment ready.")
     return G, apsp_matrix, node_to_idx
 
-def augment_instance_with_solution(cvrp_instance: pd.DataFrame, cvrp_solution: List[List[int]]) -> None:
+def augment_instance_with_solution(cvrp_instance: pd.DataFrame, cvrp_solution: List[List[int]]) -> pd.DataFrame:
     '''Given a CVRP instance and its solution, this function maps each stop to its assigned vehicle in the solution.
     
     Args:
         - cvrp_instance: DataFrame containing the CVRP locations with 'lon' and 'lat' columns.
         - cvrp_solution: A list of lists, where each inner list represents a vehicle route.
     Returns:
-        - None (the function modifies the cvrp_instance DataFrame in place).
+        - cvrp_instance_aug: The input DataFrame augmented with an 'assigned_vehicle' column indicating the vehicle assigned to each stop.
     '''
-    
 
     # Target Stops featuring hoverable demand variables
     stop_to_vehicle = {stop: vid for vid, stops in enumerate(cvrp_solution) for stop in stops if stop != 0}
     stop_to_vehicle[0] = "depot"
-    cvrp_instance['assigned_vehicle'] = cvrp_instance.index.map(stop_to_vehicle)
-
+    cvrp_instance_aug = cvrp_instance.copy(deep=True)
+    cvrp_instance_aug['assigned_vehicle'] = cvrp_instance_aug.index.map(stop_to_vehicle)
+    return cvrp_instance_aug
 
 def visualize_cvrp_solution(cvrp_instance: pd.DataFrame, 
                             cost_matrix: np.ndarray,
                             cvrp_solution: List[List[int]], 
                             G_utm: nx.Graph,
-                            fname: str = "interactive_map.html") -> folium.Map:
+                            panel_title: str = "CVRP Optimization Solution",
+                            fname: str = None) -> folium.Map:
     '''Generates an interactive map visualization of the CVRP instance and its solution.
         - Draws the base road network, original VRP nodes and the vehicle routes in the CVRP solution.
         - Computes route cost metrics (fuel consumption) and displays them in a floating
@@ -163,11 +165,13 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
         - cvrp_solution: A list of lists, where each inner list represents a vehicle route.
         - cost_matrix: A 2D numpy array containing the pre-computed costs between each pair of locations.
         - G_utm: The road network graph from OSMnx in utm
-        - fname: Filename to save the generated interactive map HTML.
+        - panel_title: Title for the floating information panel on the map.
+        - fname: Filename to save the generated interactive map HTML (skip if None)
     Returns:
-        - None (the function saves the interactive map as an HTML file and prints a message with instructions to view it).
+        - folium.Map: The generated interactive map.
     '''
-    assert fname[-5:] == ".html", "Output filename must end with '.html'."
+    if fname is not None:
+        assert fname.endswith(".html"), "Output filename must end with '.html'."
     assert 'demand' in cvrp_instance.columns, "cvrp_instance must have a 'demand' column."
     assert 'edge_index' in cvrp_instance.columns, "cvrp_instance must have an 'edge_index' column."
     assert 'frac' in cvrp_instance.columns, "cvrp_instance must have a 'frac' column."
@@ -176,10 +180,9 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
     edge_indices = cvrp_instance['edge_index'].values
     t = cvrp_instance['frac'].values
 
-    # Add vehicle assignment to the instance if not already present (for visualization purposes)
-    if 'assigned_vehicle' not in cvrp_instance.columns:
-        augment_instance_with_solution(cvrp_instance, cvrp_solution)
-    
+    # Add vehicle assignment to the instance for visualization
+    instance = augment_instance_with_solution(cvrp_instance, cvrp_solution)
+
     # Assign colors to routes (black for depot, unique colors for each vehicle route)
     route_colors = generate_diverse_colors(len(cvrp_solution))
     
@@ -191,9 +194,9 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
     transformer = Transformer.from_crs(G_utm.graph['crs'], "epsg:4326", always_xy=True)
 
     # Convert UTM coordinates of CVRP locations to lat/lon for mapping
-    lons, lats = transformer.transform(cvrp_instance.x_utm.values, cvrp_instance.y_utm.values)
+    lons, lats = transformer.transform(instance.x_utm.values, instance.y_utm.values)
     wgs_points = [sg.Point(lon, lat) for lon, lat in zip(lons, lats)]
-    points_gdf = gpd.GeoDataFrame(cvrp_instance, geometry=wgs_points, crs="EPSG:4326")
+    points_gdf = gpd.GeoDataFrame(instance, geometry=wgs_points, crs="EPSG:4326")
 
     # 1. Initialize Canvas and draw background driving network
     m = edges_gdf.to_crs("EPSG:4326").explore(
@@ -212,7 +215,7 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
     for vehicle_id, stop_sequence in enumerate(cvrp_solution):
         vehicle_color = route_colors[vehicle_id]
         route_cost = 0
-        route_demand = sum(cvrp_instance.loc[stop_sequence, 'demand'])
+        route_demand = sum(instance.loc[stop_sequence, 'demand'])
         geom_points = []
         
         # Initialize a unique Layer Group for this individual vehicle setup
@@ -323,18 +326,289 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
         icon=folium.Icon(color="black", icon="home")
     ).add_to(m)
 
-    # 4. Floating Information Panel Output
+# 4. Collapsible Floating Information Panel
     floating_panel_html = f"""
-    <div style="position: fixed; bottom: 30px; left: 30px; width: 320px; max-height: 400px; overflow-y: auto;
+    <div id="cvrp-floating-card" style="position: fixed; bottom: 30px; left: 30px; width: 320px;
         background-color: rgba(255, 255, 255, 0.95); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 8px;
-        padding: 15px; font-family: sans-serif; font-size: 13px; color: #333333; z-index: 9999; line-height: 1.4;">
-        <h4 style="margin: 0 0 10px 0; font-size: 16px; border-bottom: 2px solid #ddd; padding-bottom: 5px;">CVRP Optimization Solution ({len(cvrp_instance)} nodes)</h4>
-        <div style="margin-bottom: 15px; font-weight: bold; background: #f0f0f0; padding: 6px; border-radius: 4px;">
-            Overall Solution Cost: <span style="color: #2b2b2b;">{round(total_cvrp_cost, 4)} (L)</span>
+        padding: 15px; font-family: sans-serif; font-size: 13px; color: #333333; z-index: 9999; line-height: 1.4;
+        display: flex; flex-direction: column;">
+        
+        <h4 style="margin: 0; font-size: 15px; border-bottom: 2px solid #ddd; padding-bottom: 6px; cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center;" 
+            onclick="togglePanel(this)">
+            <span>{panel_title} ({len(cvrp_instance)} nodes)</span>
+            <span id="panel-chevron" style="font-size: 11px; color: #666; transition: transform 0.2s;">▼</span>
+        </h4>
+        
+        <div id="panel-main-content" style="max-height: 350px; overflow-y: auto; margin-top: 10px; display: block;">
+            <div style="margin-bottom: 15px; font-weight: bold; background: #f0f0f0; padding: 6px; border-radius: 4px;">
+                Overall Solution Cost: <span style="color: #2b2b2b;">{round(total_cvrp_cost, 4)} (L)</span>
+            </div>
+            {route_summaries_html}
         </div>
-        {route_summaries_html}
     </div>
+    
+    <script>
+        function togglePanel(headerElement) {{
+            var content = document.getElementById('panel-main-content');
+            var chevron = document.getElementById('panel-chevron');
+            if (content.style.display === 'none') {{
+                content.style.display = 'block';
+                chevron.style.transform = 'rotate(0deg)';
+            }} else {{
+                content.style.display = 'none';
+                chevron.style.transform = 'rotate(-90deg)';
+            }}
+        }}
+    </script>
     """
     m.get_root().html.add_child(folium.Element(floating_panel_html))
     folium.LayerControl(collapsed=True).add_to(m)
-    m.save(fname)
+
+    # 5. Injection Mechanism for Inter-Map Sync Engine
+    sync_macro = folium.MacroElement()
+    sync_macro._template = branca.element.Template("""
+        {% macro script(this, kwargs) %}
+        var leafletMap = {{this._parent.get_name()}};
+        
+        function broadCastMovement() {
+            window.parent.postMessage({
+                type: 'LEAFLET_SYNC_EVENT',
+                center: leafletMap.getCenter(),
+                zoom: leafletMap.getZoom()
+            }, '*');
+        }
+        
+        // Listen to map events and forward parameters up to parent wrapper
+        leafletMap.on('move', broadCastMovement);
+        
+        // Recieve sync commands coming downward from parent wrapper
+        window.addEventListener('message', function(event) {
+            if (event.data.type === 'LEAFLET_SYNC_EVENT') {
+                leafletMap.off('move', broadCastMovement); // Temporarily detach listener to break loop
+                leafletMap.setView(event.data.center, event.data.zoom, {animate: false});
+                leafletMap.on('move', broadCastMovement);  // Reattach listener
+            }
+        });
+        {% endmacro %}
+    """)
+    m.add_child(sync_macro)
+
+
+    if fname is not None:
+        m.save(fname)
+        print(f"Map visualization saved to {fname}. Open this file in a web browser to interact with the map.")
+
+    return m
+
+def visualize_two_cvrp_solutions(cvrp_instance: pd.DataFrame, 
+                                 cost_matrix: np.ndarray,
+                                 cvrp_solution_1: List[List[int]], 
+                                 cvrp_solution_2: List[List[int]], 
+                                 G_utm: nx.Graph,
+                                 panel_title_1: str = "CVRP Solution 1",
+                                 panel_title_2: str = "CVRP Solution 2",
+                                 fname: str = "interactive_map.html"):
+    """
+    Generates a split-screen HTML visualization to compare two CVRP solutions side-by-side.
+    """
+    # 1. Generate both maps using copies of the dataframe to prevent column collisions
+    m1 = visualize_cvrp_solution(
+        cvrp_instance, cost_matrix, cvrp_solution_1, G_utm, 
+        fname=None, panel_title=panel_title_1
+    )
+    
+    m2 = visualize_cvrp_solution(
+        cvrp_instance, cost_matrix, cvrp_solution_2, G_utm, 
+        fname=None, panel_title=panel_title_2
+    )
+    
+    # 2. Extract and protect source strings
+    srcdoc1 = html.escape(m1.get_root().render())
+    srcdoc2 = html.escape(m2.get_root().render())
+    
+#     # 3. Construct master DOM wrapper with cross-iframe cross-talk script
+#     split_screen_html = f"""<!DOCTYPE html>
+# <html>
+# <head>
+#     <meta charset="utf-8">
+#     <title>CVRP Dual-View Optimization Comparison Panel</title>
+#     <style>
+#         body, html {{
+#             margin: 0; padding: 0; height: 100%; width: 100%; 
+#             display: flex; font-family: sans-serif; overflow: hidden;
+#             background-color: #222;
+#         }}
+#         .map-wrapper {{
+#             flex: 1; height: 100%; position: relative;
+#         }}
+#         .center-axis-divider {{
+#             width: 5px; background-color: #1a1a1a; z-index: 10000;
+#             box-shadow: 0 0 10px rgba(0,0,0,0.7);
+#         }}
+#         iframe {{
+#             width: 100%; height: 100%; border: none; display: block;
+#         }}
+#     </style>
+# </head>
+# <body>
+#     <div class="map-wrapper">
+#         <iframe id="mapFrameLeft" srcdoc="{srcdoc1}"></iframe>
+#     </div>
+    
+#     <div class="center-axis-divider"></div>
+    
+#     <div class="map-wrapper">
+#         <iframe id="mapFrameRight" srcdoc="{srcdoc2}"></iframe>
+#     </div>
+
+#     <script>
+#         var leftIframe = document.getElementById('mapFrameLeft');
+#         var rightIframe = document.getElementById('mapFrameRight');
+        
+#         // Central hub capturing synchronization flags and cross-routing them
+#         window.addEventListener('message', function(event) {{
+#             if (event.data && event.data.type === 'LEAFLET_SYNC_EVENT') {{
+#                 if (event.source === leftIframe.contentWindow) {{
+#                     rightIframe.contentWindow.postMessage(event.data, '*');
+#                 }} else if (event.source === rightIframe.contentWindow) {{
+#                     leftIframe.contentWindow.postMessage(event.data, '*');
+#                 }}
+#             }}
+#         }});
+#     </script>
+# </body>
+# </html>
+# """
+
+    split_screen_html = f"""<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>CVRP Dual-View Optimization Comparison Panel</title>
+        <style>
+            body, html {{
+                margin: 0; padding: 0; height: 100%; width: 100%; 
+                display: flex; font-family: sans-serif; overflow: hidden;
+                background-color: #222;
+            }}
+            .map-wrapper {{
+                flex: 1; height: 100%; position: relative;
+            }}
+            .center-axis-divider {{
+                width: 5px; background-color: #1a1a1a; z-index: 10000;
+                box-shadow: 0 0 10px rgba(0,0,0,0.7);
+            }}
+            iframe {{
+                width: 100%; height: 100%; border: none; display: block;
+            }}
+            
+            /* Floating Control Widget Container */
+            .control-hub {{
+                position: fixed;
+                top: 20px;
+                left: 12.5%;
+                transform: translateX(-50%);
+                z-index: 20000;
+                background: rgba(255, 255, 255, 0.95);
+                padding: 10px 20px;
+                border-radius: 30px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                user-select: none;
+            }}
+            .control-label {{
+                font-size: 13px;
+                font-weight: bold;
+                color: #333;
+            }}
+            
+            /* Sleek CSS Toggle Switch Styling */
+            .switch {{
+                position: relative;
+                display: inline-block;
+                width: 46px;
+                height: 24px;
+            }}
+            .switch input {{
+                opacity: 0; width: 0; height: 0;
+            }}
+            .slider {{
+                position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+                background-color: #ccc; transition: .3s; border-radius: 24px;
+            }}
+            .slider:before {{
+                position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+                background-color: white; transition: .3s; border-radius: 50%;
+            }}
+            input:checked + .slider {{
+                background-color: #2196F3;
+            }}
+            input:checked + .slider:before {{
+                transform: translateX(22px);
+            }}
+        </style>
+    </head>
+    <body>
+
+        <div class="control-hub">
+            <span class="control-label" id="statusLabel">Synchronize Views</span>
+            <label class="switch">
+                <input type="checkbox" id="syncToggle" checked onchange="updateToggleUI()">
+                <span class="slider"></span>
+            </label>
+        </div>
+
+        <div class="map-wrapper">
+            <iframe id="mapFrameLeft" srcdoc="{srcdoc1}"></iframe>
+        </div>
+        
+        <div class="center-axis-divider"></div>
+        
+        <div class="map-wrapper">
+            <iframe id="mapFrameRight" srcdoc="{srcdoc2}"></iframe>
+        </div>
+
+        <script>
+            var leftIframe = document.getElementById('mapFrameLeft');
+            var rightIframe = document.getElementById('mapFrameRight');
+            var syncToggle = document.getElementById('syncToggle');
+            var statusLabel = document.getElementById('statusLabel');
+            
+            // Simple UI feedback update
+            function updateToggleUI() {{
+                if (syncToggle.checked) {{
+                    statusLabel.style.color = '#2196F3';
+                    statusLabel.innerText = "Views Synchronized";
+                }} else {{
+                    statusLabel.style.color = '#666';
+                    statusLabel.innerText = "Views Independent";
+                }}
+            }}
+            
+            // Initialize UI Text Color on load
+            updateToggleUI();
+            
+            // Central hub capturing synchronization flags and conditionally routing them
+            window.addEventListener('message', function(event) {{
+                // CRITICAL STEP: Only pass data if the checkbox is actively selected!
+                if (syncToggle.checked && event.data && event.data.type === 'LEAFLET_SYNC_EVENT') {{
+                    if (event.source === leftIframe.contentWindow) {{
+                        rightIframe.contentWindow.postMessage(event.data, '*');
+                    }} else if (event.source === rightIframe.contentWindow) {{
+                        leftIframe.contentWindow.postMessage(event.data, '*');
+                    }}
+                }}
+            }});
+        </script>
+    </body>
+    </html>
+    """
+        
+        # 4. Save compilation file
+        
+    with open(fname, "w", encoding="utf-8") as f:
+        f.write(split_screen_html)
+    
+    print(f"Dual-view comparison map saved to {fname}. Open this file in a web browser to interact with the synchronized maps.")

@@ -1,11 +1,12 @@
 import numpy as np
+from .parameters import MAX_DEMAND
 
 class CVRPGenerator:
-    def __init__(self, G, apsp_matrix, node_to_idx, rng=np.random.default_rng(), max_demand=10):
+    def __init__(self, G, apsp_matrix, node_to_idx, rng=np.random.default_rng()):
         self.apsp_matrix = apsp_matrix
         self.num_edges = len(G.edges)
         self.rng = rng
-        self.max_demand = max_demand
+        self.max_demand = MAX_DEMAND
 
         # Pre-allocate numpy arrays for rapid vectorization
         # u_idx, v_idx: integer indices of the source/target node
