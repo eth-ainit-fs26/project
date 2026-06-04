@@ -1,5 +1,5 @@
 import colorsys, collections
-from typing import List
+from typing import List, Optional
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse import csgraph 
@@ -14,6 +14,9 @@ import shapely.geometry as sg
 from shapely.ops import substring
 import html
 import branca
+
+from .cvrp_generator import CVRPGenerator
+from .parameters import ALPHA, BETA
 
 def generate_diverse_colors(n: int) -> List[str]:
     """
@@ -43,19 +46,26 @@ def generate_diverse_colors(n: int) -> List[str]:
     return colors
 
 
-def convert_node_info_to_dataframe(coords_utm, demands, edge_indices, t):
-    num_locations = coords_utm.shape[0]
+def convert_node_info_to_dataframe(edge_indices, t, demands):
+    num_locations = demands.shape[-1]
     df = pd.DataFrame({
         'location_id': np.arange(num_locations),
-        'demand': demands,
-        'x_utm': coords_utm[:, 0],
-        'y_utm': coords_utm[:, 1],
         'edge_index': edge_indices,
         'frac': t,
+        'demand': demands
     })
     return df
 
-def prepare_zurich_environment(alpha=1e-4, beta=1e-3):
+def prepare_zurich_environment(alpha=ALPHA, beta=BETA):
+    '''Prepares the road network environment for Zürich, Switzerland by downloading the graph, processing it, and computing the all-pairs shortest path matrix.
+    Args:
+        alpha (float): Weight for distance in fuel calculation.
+        beta (float): Weight for travel time in fuel calculation.
+    Returns:
+        G_utm (nx.MultiDiGraph): The processed road network graph in UTM coordinates.
+        apsp (np.ndarray): The all-pairs shortest path matrix.
+        node_map (dict): A mapping from OSM node IDs to integer indices.
+    '''
     print("===== Preparing the road network for Zürich, Switzerland =====")
     
     # 1. Download Zurich drive network
@@ -101,26 +111,36 @@ def prepare_zurich_environment(alpha=1e-4, beta=1e-3):
         total_time = data['travel_time']   # penalized seconds
         data['fuel'] = alpha * distance + beta * total_time # add fuel attribute to each edge
 
+
+    # 8. Eliminate parallel edges (keep only the one with the lowest fuel cost)
+    print("Removing parallel edges (keeping only the lowest fuel cost edge for each (u, v) pair)...")
+    edges_to_remove = []
+    for u, v in set(G.edges()):
+        # If there's more than one edge between node u and node v
+        if len(G[u][v]) > 1:
+            # Find the key (k) that has the absolute lowest fuel cost
+            best_key = min(G[u][v].keys(), key=lambda k: G[u][v][k].get('fuel', float('inf')))
+            # Add all other keys for this specific (u, v) pair to the removal list
+            for k in G[u][v].keys():
+                if k != best_key:
+                    edges_to_remove.append((u, v, k))
+
+    # Safely batch-delete the sub-optimal parallel edges
+    G.remove_edges_from(edges_to_remove)
+
     print("Computing All-Pairs Shortest Path (APSP) Matrix...")
-    # 8. Map nodes to integers for SciPy
+    # 9. Map nodes to integers for SciPy
     node_list = list(G.nodes())
     node_to_idx = {n: i for i, n in enumerate(node_list)}
     num_nodes = len(node_list)
     
-    # 9. Build sparse adjacency matrix (handle parallel edges by taking the minimum cost)
-    edges_dict = collections.defaultdict(lambda: float('inf'))
+    # 10. Build sparse adjacency matrix (handle parallel edges by taking the minimum cost)
+    row, col, data_list = [], [], [] 
     for u, v, k, d in G.edges(keys=True, data=True): 
-        # (u,v,k) is the edge index in OSM, where u is the source node id,
-        # v is the target node id, and k is the key for parallel edges
         i, j = node_to_idx[u], node_to_idx[v]
-        if d['fuel'] < edges_dict[(i, j)]:
-            edges_dict[(i, j)] = d['fuel']
-            
-    row, col, data_list = [], [], [] # rows, columns, and data for COO format
-    for (i, j), cost in edges_dict.items():
         row.append(i)
         col.append(j)
-        data_list.append(cost)
+        data_list.append(d['fuel'])
         
     adj_matrix = sp.coo_matrix((data_list, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
     # coo_matrix: create a sparse matrix in coordinate (COO) format from the edge list
@@ -130,7 +150,22 @@ def prepare_zurich_environment(alpha=1e-4, beta=1e-3):
     # We do the computation only once and reuse the resulting matrix for all routing queries
     apsp_matrix = csgraph.shortest_path(adj_matrix, directed=True, method='D')
     
+    # 11. Normalize node coordinates to [-1, 1] range for better numerical stability
+    print("Adding normalized coordinates to node attributes...")
+    x_coords = [data['x'] for node, data in G.nodes(data=True)]
+    y_coords = [data['y'] for node, data in G.nodes(data=True)]
+        
+    x_min, x_max = min(x_coords), max(x_coords)
+    y_min, y_max = min(y_coords), max(y_coords)
+    x_denom = x_max - x_min
+    y_denom = y_max - y_min
+    # Scale strictly to [-1, 1]
+    for _, data in G.nodes(data=True):    
+        data['x_norm'] = 2*(data['x'] - x_min) / x_denom - 1
+        data['y_norm'] = 2*(data['y'] - y_min) / y_denom - 1
+
     print("Environment ready.")
+
     return G, apsp_matrix, node_to_idx
 
 def augment_instance_with_solution(cvrp_instance: pd.DataFrame, cvrp_solution: List[List[int]]) -> pd.DataFrame:
@@ -150,10 +185,11 @@ def augment_instance_with_solution(cvrp_instance: pd.DataFrame, cvrp_solution: L
     cvrp_instance_aug['assigned_vehicle'] = cvrp_instance_aug.index.map(stop_to_vehicle)
     return cvrp_instance_aug
 
-def visualize_cvrp_solution(cvrp_instance: pd.DataFrame, 
+def visualize_cvrp_solution(G_utm: nx.MultiDiGraph,
+                            generator: CVRPGenerator,
+                            cvrp_instance: pd.DataFrame, 
                             cost_matrix: np.ndarray,
-                            cvrp_solution: List[List[int]], 
-                            G_utm: nx.Graph,
+                            cvrp_solution: Optional[List[List[int]]], 
                             panel_title: str = "CVRP Optimization Solution",
                             fname: str = None) -> folium.Map:
     '''Generates an interactive map visualization of the CVRP instance and its solution.
@@ -161,10 +197,12 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
         - Computes route cost metrics (fuel consumption) and displays them in a floating
             information panel on the map.
     Args:
-        - cvrp_instance: DataFrame containing the CVRP locations with 'lon', 'lat', and 'demand' columns.
-        - cvrp_solution: A list of lists, where each inner list represents a vehicle route.
-        - cost_matrix: A 2D numpy array containing the pre-computed costs between each pair of locations.
         - G_utm: The road network graph from OSMnx in utm
+        - generator: The CVRP generator used to create the instance
+        - cvrp_instance: DataFrame containing the CVRP locations with 'edge_index', 'frac', and 'demand' columns.
+        - cost_matrix: A 2D numpy array containing the pre-computed costs between each pair of locations.
+        - cvrp_solution: A list of lists, where each inner list represents a vehicle route. 
+                         If None, only the base map and stops will be visualized.
         - panel_title: Title for the floating information panel on the map.
         - fname: Filename to save the generated interactive map HTML (skip if None)
     Returns:
@@ -175,17 +213,18 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
     assert 'demand' in cvrp_instance.columns, "cvrp_instance must have a 'demand' column."
     assert 'edge_index' in cvrp_instance.columns, "cvrp_instance must have an 'edge_index' column."
     assert 'frac' in cvrp_instance.columns, "cvrp_instance must have a 'frac' column."
-    assert 'x_utm' in cvrp_instance.columns and 'y_utm' in cvrp_instance.columns, "cvrp_instance must have 'x_utm' and 'y_utm' columns for UTM coordinates."
 
     edge_indices = cvrp_instance['edge_index'].values
     t = cvrp_instance['frac'].values
 
     # Add vehicle assignment to the instance for visualization
-    instance = augment_instance_with_solution(cvrp_instance, cvrp_solution)
+    if cvrp_solution is not None:
+        instance = augment_instance_with_solution(cvrp_instance, cvrp_solution)
+        # Assign colors to routes (black for depot, unique colors for each vehicle route)
+        route_colors = generate_diverse_colors(len(cvrp_solution))
+    else:
+        instance = cvrp_instance.copy(deep=True)
 
-    # Assign colors to routes (black for depot, unique colors for each vehicle route)
-    route_colors = generate_diverse_colors(len(cvrp_solution))
-    
     # Extract graph information for visualization
     _, edges_gdf = ox.graph_to_gdfs(G_utm, nodes=True, edges=True)
     all_edges = list(G_utm.edges(keys=True))
@@ -194,7 +233,8 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
     transformer = Transformer.from_crs(G_utm.graph['crs'], "epsg:4326", always_xy=True)
 
     # Convert UTM coordinates of CVRP locations to lat/lon for mapping
-    lons, lats = transformer.transform(instance.x_utm.values, instance.y_utm.values)
+    x_utm, y_utm = generator.compute_interpolated_coordinates(edge_indices, t, normalized=False)
+    lons, lats = transformer.transform(x_utm, y_utm)
     wgs_points = [sg.Point(lon, lat) for lon, lat in zip(lons, lats)]
     points_gdf = gpd.GeoDataFrame(instance, geometry=wgs_points, crs="EPSG:4326")
 
@@ -207,117 +247,131 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
         name="Base Street Network",
         show=False
     )
-
-    # 2. Route Tracing and Visualization
-    route_summaries_html = ""
-    total_cvrp_cost = 0
     
-    for vehicle_id, stop_sequence in enumerate(cvrp_solution):
-        vehicle_color = route_colors[vehicle_id]
-        route_cost = 0
-        route_demand = sum(instance.loc[stop_sequence, 'demand'])
-        geom_points = []
+    # 2. Route Tracing and Visualization
+    if cvrp_solution is not None:
+        route_summaries_html = ""
+        total_cvrp_cost = 0
         
-        # Initialize a unique Layer Group for this individual vehicle setup
-        vehicle_layer = folium.FeatureGroup(name=f"Vehicle {vehicle_id} Stops").add_to(m)
-
-        for idx in range(len(stop_sequence) - 1):
-            # Extract the current and next VRP stops in the sequence
-            loc_from = stop_sequence[idx]
-            loc_to = stop_sequence[idx + 1]
+        for vehicle_id, stop_sequence in enumerate(cvrp_solution):
+            vehicle_color = route_colors[vehicle_id]
+            route_cost = 0
+            route_demand = sum(instance.loc[stop_sequence, 'demand'])
+            geom_points = []
             
-            # Extract the pre-computed cost from the cost matrix for this leg of the route
-            leg_cost = cost_matrix[loc_from, loc_to]
-            route_cost += leg_cost
+            # Initialize a unique Layer Group for this individual vehicle setup
+            vehicle_layer = folium.FeatureGroup(name=f"Vehicle {vehicle_id} Stops").add_to(m)
 
-            # Extract the source and target nodes for the edges sampled to produce the two stops
-            u_from, v_from, k_from = all_edges[edge_indices[loc_from]]
-            u_to, v_to, k_to = all_edges[edge_indices[loc_to]]
-            d_from = G_utm.edges[u_from, v_from, k_from]
-            d_to = G_utm.edges[u_to, v_to, k_to]
+            for idx in range(len(stop_sequence) - 1):
+                # Extract the current and next VRP stops in the sequence
+                loc_from = stop_sequence[idx]
+                loc_to = stop_sequence[idx + 1]
+                
+                # Extract the pre-computed cost from the cost matrix for this leg of the route
+                leg_cost = cost_matrix[loc_from, loc_to]
+                route_cost += leg_cost
 
-            # --- GET TRUE GEOMETRY OR CREATE ONE IF STRAIGHT ---
-            # If OSM stored a shortcut straight line, it lacks a geometry attribute. 
-            # We create a fallback LineString using the bounding intersections.
-            if 'geometry' in d_from:
-                geom_from = d_from['geometry']
-            else:
-                geom_from = sg.LineString([(G_utm.nodes[u_from]['x'], G_utm.nodes[u_from]['y']), 
-                                           (G_utm.nodes[v_from]['x'], G_utm.nodes[v_from]['y'])])
-                
-            if 'geometry' in d_to:
-                geom_to = d_to['geometry']
-            else:
-                geom_to = sg.LineString([(G_utm.nodes[u_to]['x'], G_utm.nodes[u_to]['y']), 
-                                         (G_utm.nodes[v_to]['x'], G_utm.nodes[v_to]['y'])])
+                # Extract the source and target nodes for the edges sampled to produce the two stops
+                u_from, v_from, k_from = all_edges[edge_indices[loc_from]]
+                u_to, v_to, k_to = all_edges[edge_indices[loc_to]]
+                d_from = G_utm.edges[u_from, v_from, k_from]
+                d_to = G_utm.edges[u_to, v_to, k_to]
 
-            # --- CASE A: Same-Edge Shortcut ---
-            if edge_indices[loc_from] == edge_indices[loc_to] and t[loc_from] <= t[loc_to]:
-                # Cut the exact segment curve out of the main edge line using normalized fractions
-                sub_curve = substring(geom_from, t[loc_from], t[loc_to], normalized=True)
-                
-                # Transform coordinates to lat/lon and add to path
-                lons_c, lats_c = transformer.transform(*sub_curve.xy)
-                geom_points.extend(zip(lats_c, lons_c))
-                
-            # --- CASE B: Macro Routing across Intersections ---
-            else:
-                # Part 1: True curved exit segment (from current fraction t_from to end of street 1.0)
-                exit_curve = substring(geom_from, t[loc_from], 1.0, normalized=True)
-                lons_c, lats_c = transformer.transform(*exit_curve.xy)
-                geom_points.extend(zip(lats_c, lons_c))
-                
-                # Part 2: Macro Network Path Execution
-                try:
-                    osm_path = nx.shortest_path(G_utm, source=v_from, target=u_to, weight="fuel")                    
-                    path_geom = ox.routing.route_to_gdf(G_utm, osm_path)
-                    for _, row in path_geom.iterrows():
-                        if 'geometry' in row and row['geometry'] is not None:
-                            # Convert network road geometries cleanly back to WGS84 degrees
-                            geom_wgs84 = ox.projection.project_geometry(row['geometry'], crs=G_utm.graph['crs'], to_latlong=True)[0]
-                            geom_points.extend([(c[1], c[0]) for c in list(geom_wgs84.coords)])
-                except nx.NetworkXNoPath:
-                    pass
-                
-                # Part 3: True curved entry segment (from start of target street 0.0 to destination fraction t_to)
-                entry_curve = substring(geom_to, 0.0, t[loc_to], normalized=True)
-                lons_c, lats_c = transformer.transform(*entry_curve.xy)
-                geom_points.extend(zip(lats_c, lons_c))
-                
+                # --- GET TRUE GEOMETRY OR CREATE ONE IF STRAIGHT ---
+                # If OSM stored a shortcut straight line, it lacks a geometry attribute. 
+                # We create a fallback LineString using the bounding intersections.
+                if 'geometry' in d_from:
+                    geom_from = d_from['geometry']
+                else:
+                    geom_from = sg.LineString([(G_utm.nodes[u_from]['x'], G_utm.nodes[u_from]['y']), 
+                                            (G_utm.nodes[v_from]['x'], G_utm.nodes[v_from]['y'])])
+                    
+                if 'geometry' in d_to:
+                    geom_to = d_to['geometry']
+                else:
+                    geom_to = sg.LineString([(G_utm.nodes[u_to]['x'], G_utm.nodes[u_to]['y']), 
+                                            (G_utm.nodes[v_to]['x'], G_utm.nodes[v_to]['y'])])
 
-        if geom_points:
-            route_line = folium.PolyLine(geom_points, color=vehicle_color, weight=4.5, opacity=0.85, 
-                                         name=f"Vehicle Route {vehicle_id}").add_to(vehicle_layer)
-            # 2. Bind directional arrows along the path
-            plugins.PolyLineTextPath(
-                route_line,
-                '      >      ',       # > as arrow symbol
-                repeat=True,    # Repeat the arrow along the entire route
-                attributes={
-                    'fill': vehicle_color, 
-                    'font-weight': 'bold', 
-                    'font-size': '18px'
-                }
-            ).add_to(vehicle_layer)
+                # --- CASE A: Same-Edge Shortcut ---
+                if edge_indices[loc_from] == edge_indices[loc_to] and t[loc_from] <= t[loc_to]:
+                    # Cut the exact segment curve out of the main edge line using normalized fractions
+                    sub_curve = substring(geom_from, t[loc_from], t[loc_to], normalized=True)
+                    
+                    # Transform coordinates to lat/lon and add to path
+                    lons_c, lats_c = transformer.transform(*sub_curve.xy)
+                    geom_points.extend(zip(lats_c, lons_c))
+                    
+                # --- CASE B: Macro Routing across Intersections ---
+                else:
+                    # Part 1: True curved exit segment (from current fraction t_from to end of street 1.0)
+                    exit_curve = substring(geom_from, t[loc_from], 1.0, normalized=True)
+                    lons_c, lats_c = transformer.transform(*exit_curve.xy)
+                    geom_points.extend(zip(lats_c, lons_c))
+                    
+                    # Part 2: Macro Network Path Execution
+                    # If v_from and u_to are the same node, we are already at the correct intersection and can skip routing
+                    if v_from == u_to:
+                        continue
+                    try:
+                        osm_path = nx.shortest_path(G_utm, source=v_from, target=u_to, weight="fuel")                    
+                        path_geom = ox.routing.route_to_gdf(G_utm, osm_path)
+                        for _, row in path_geom.iterrows():
+                            if 'geometry' in row and row['geometry'] is not None:
+                                # Convert network road geometries cleanly back to WGS84 degrees
+                                geom_wgs84 = ox.projection.project_geometry(row['geometry'], crs=G_utm.graph['crs'], to_latlong=True)[0]
+                                geom_points.extend([(c[1], c[0]) for c in list(geom_wgs84.coords)])
+                    except nx.NetworkXNoPath:
+                        raise ValueError(f"No path found in the road network from node {v_from} to node {u_to}. This should not happen in a strongly connected graph. Please check the graph connectivity and edge weights.")
+                    
+                    # Part 3: True curved entry segment (from start of target street 0.0 to destination fraction t_to)
+                    entry_curve = substring(geom_to, 0.0, t[loc_to], normalized=True)
+                    lons_c, lats_c = transformer.transform(*entry_curve.xy)
+                    geom_points.extend(zip(lats_c, lons_c))
+                    
 
-        # Render stops directly into the layer instance
-        points_gdf.loc[list(set(stop_sequence).difference({0}))].explore(
-            m=vehicle_layer,               
-            color=vehicle_color, 
+            if geom_points:
+                route_line = folium.PolyLine(geom_points, color=vehicle_color, weight=4.5, opacity=0.85, 
+                                            name=f"Vehicle Route {vehicle_id}").add_to(vehicle_layer)
+                # 2. Bind directional arrows along the path
+                plugins.PolyLineTextPath(
+                    route_line,
+                    '      >      ',       # > as arrow symbol
+                    repeat=True,    # Repeat the arrow along the entire route
+                    attributes={
+                        'fill': vehicle_color, 
+                        'font-weight': 'bold', 
+                        'font-size': '18px'
+                    }
+                ).add_to(vehicle_layer)
+
+            # Render stops directly into the layer instance
+            points_gdf.loc[list(set(stop_sequence).difference({0}))].explore(
+                m=vehicle_layer,               
+                color=vehicle_color, 
+                marker_kwds={"radius": 8}, 
+                tooltip=["location_id", "demand", "assigned_vehicle"],
+                highlight=True
+            )
+            
+            total_cvrp_cost += route_cost
+            route_summaries_html += f"""
+            <div style="margin-bottom: 8px; border-left: 4px solid {vehicle_color}; padding-left: 8px;">
+                <b style="color: {vehicle_color};">Vehicle {vehicle_id}</b><br/>
+                <b>Path:</b> {' → '.join(map(str, stop_sequence))}<br/>
+                <b>Total Loaded Demand:</b> {route_demand} units<br/>
+                <b>Route Cost:</b> {round(route_cost, 4)} (L)
+            </div>
+            """
+    else:
+        # Render all customer stops cleanly on the map base layer (excluding the depot at index 0)
+        points_gdf.iloc[1:].explore(
+            m=m,               
+            color="crimson", 
             marker_kwds={"radius": 8}, 
-            tooltip=["location_id", "demand", "assigned_vehicle"],
-            highlight=True
+            tooltip=["location_id", "demand"] ,
+            highlight=True,
+            name="Unassigned Customer Stops"
         )
-        
-        total_cvrp_cost += route_cost
-        route_summaries_html += f"""
-        <div style="margin-bottom: 8px; border-left: 4px solid {vehicle_color}; padding-left: 8px;">
-            <b style="color: {vehicle_color};">Vehicle {vehicle_id}</b><br/>
-            <b>Path:</b> {' → '.join(map(str, stop_sequence))}<br/>
-            <b>Total Loaded Demand:</b> {route_demand} units<br/>
-            <b>Route Cost:</b> {round(route_cost, 4)} (L)
-        </div>
-        """
     
     # 3. Draw depot
     folium.Marker(
@@ -326,42 +380,45 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
         icon=folium.Icon(color="black", icon="home")
     ).add_to(m)
 
-# 4. Collapsible Floating Information Panel
-    floating_panel_html = f"""
-    <div id="cvrp-floating-card" style="position: fixed; bottom: 30px; left: 30px; width: 320px;
-        background-color: rgba(255, 255, 255, 0.95); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 8px;
-        padding: 15px; font-family: sans-serif; font-size: 13px; color: #333333; z-index: 9999; line-height: 1.4;
-        display: flex; flex-direction: column;">
-        
-        <h4 style="margin: 0; font-size: 15px; border-bottom: 2px solid #ddd; padding-bottom: 6px; cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center;" 
-            onclick="togglePanel(this)">
-            <span>{panel_title} ({len(cvrp_instance)} nodes)</span>
-            <span id="panel-chevron" style="font-size: 11px; color: #666; transition: transform 0.2s;">▼</span>
-        </h4>
-        
-        <div id="panel-main-content" style="max-height: 350px; overflow-y: auto; margin-top: 10px; display: block;">
-            <div style="margin-bottom: 15px; font-weight: bold; background: #f0f0f0; padding: 6px; border-radius: 4px;">
-                Overall Solution Cost: <span style="color: #2b2b2b;">{round(total_cvrp_cost, 4)} (L)</span>
+    # 4. Collapsible Floating Information Panel
+    if cvrp_solution is not None:
+        floating_panel_html = f"""
+        <div id="cvrp-floating-card" style="position: fixed; bottom: 30px; left: 30px; width: 320px;
+            background-color: rgba(255, 255, 255, 0.95); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 8px;
+            padding: 15px; font-family: sans-serif; font-size: 13px; color: #333333; z-index: 9999; line-height: 1.4;
+            display: flex; flex-direction: column;">
+            
+            <h4 style="margin: 0; font-size: 15px; border-bottom: 2px solid #ddd; padding-bottom: 6px; cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center;" 
+                onclick="togglePanel(this)">
+                <span>{panel_title} ({len(cvrp_instance)} nodes)</span>
+                <span id="panel-chevron" style="font-size: 11px; color: #666; transition: transform 0.2s;">▼</span>
+            </h4>
+            
+            <div id="panel-main-content" style="max-height: 350px; overflow-y: auto; margin-top: 10px; display: block;">
+                <div style="margin-bottom: 15px; font-weight: bold; background: #f0f0f0; padding: 6px; border-radius: 4px;">
+                    Overall Solution Cost: <span style="color: #2b2b2b;">{round(total_cvrp_cost, 4)} (L)</span>
+                </div>
+                {route_summaries_html}
             </div>
-            {route_summaries_html}
         </div>
-    </div>
-    
-    <script>
-        function togglePanel(headerElement) {{
-            var content = document.getElementById('panel-main-content');
-            var chevron = document.getElementById('panel-chevron');
-            if (content.style.display === 'none') {{
-                content.style.display = 'block';
-                chevron.style.transform = 'rotate(0deg)';
-            }} else {{
-                content.style.display = 'none';
-                chevron.style.transform = 'rotate(-90deg)';
+        
+        <script>
+            function togglePanel(headerElement) {{
+                var content = document.getElementById('panel-main-content');
+                var chevron = document.getElementById('panel-chevron');
+                if (content.style.display === 'none') {{
+                    content.style.display = 'block';
+                    chevron.style.transform = 'rotate(0deg)';
+                }} else {{
+                    content.style.display = 'none';
+                    chevron.style.transform = 'rotate(-90deg)';
+                }}
             }}
-        }}
-    </script>
-    """
-    m.get_root().html.add_child(folium.Element(floating_panel_html))
+        </script>
+        """
+        
+        m.get_root().html.add_child(folium.Element(floating_panel_html))
+    
     folium.LayerControl(collapsed=True).add_to(m)
 
     # 5. Injection Mechanism for Inter-Map Sync Engine
@@ -400,11 +457,12 @@ def visualize_cvrp_solution(cvrp_instance: pd.DataFrame,
 
     return m
 
-def visualize_two_cvrp_solutions(cvrp_instance: pd.DataFrame, 
+def visualize_two_cvrp_solutions(G_utm: nx.Graph,
+                                 generator: CVRPGenerator,
+                                 cvrp_instance: pd.DataFrame, 
                                  cost_matrix: np.ndarray,
                                  cvrp_solution_1: List[List[int]], 
                                  cvrp_solution_2: List[List[int]], 
-                                 G_utm: nx.Graph,
                                  panel_title_1: str = "CVRP Solution 1",
                                  panel_title_2: str = "CVRP Solution 2",
                                  fname: str = "interactive_map.html"):
@@ -413,12 +471,12 @@ def visualize_two_cvrp_solutions(cvrp_instance: pd.DataFrame,
     """
     # 1. Generate both maps using copies of the dataframe to prevent column collisions
     m1 = visualize_cvrp_solution(
-        cvrp_instance, cost_matrix, cvrp_solution_1, G_utm, 
+        G_utm, generator, cvrp_instance, cost_matrix, cvrp_solution_1,
         fname=None, panel_title=panel_title_1
     )
     
     m2 = visualize_cvrp_solution(
-        cvrp_instance, cost_matrix, cvrp_solution_2, G_utm, 
+        G_utm, generator, cvrp_instance, cost_matrix, cvrp_solution_2,
         fname=None, panel_title=panel_title_2
     )
     
@@ -426,60 +484,7 @@ def visualize_two_cvrp_solutions(cvrp_instance: pd.DataFrame,
     srcdoc1 = html.escape(m1.get_root().render())
     srcdoc2 = html.escape(m2.get_root().render())
     
-#     # 3. Construct master DOM wrapper with cross-iframe cross-talk script
-#     split_screen_html = f"""<!DOCTYPE html>
-# <html>
-# <head>
-#     <meta charset="utf-8">
-#     <title>CVRP Dual-View Optimization Comparison Panel</title>
-#     <style>
-#         body, html {{
-#             margin: 0; padding: 0; height: 100%; width: 100%; 
-#             display: flex; font-family: sans-serif; overflow: hidden;
-#             background-color: #222;
-#         }}
-#         .map-wrapper {{
-#             flex: 1; height: 100%; position: relative;
-#         }}
-#         .center-axis-divider {{
-#             width: 5px; background-color: #1a1a1a; z-index: 10000;
-#             box-shadow: 0 0 10px rgba(0,0,0,0.7);
-#         }}
-#         iframe {{
-#             width: 100%; height: 100%; border: none; display: block;
-#         }}
-#     </style>
-# </head>
-# <body>
-#     <div class="map-wrapper">
-#         <iframe id="mapFrameLeft" srcdoc="{srcdoc1}"></iframe>
-#     </div>
-    
-#     <div class="center-axis-divider"></div>
-    
-#     <div class="map-wrapper">
-#         <iframe id="mapFrameRight" srcdoc="{srcdoc2}"></iframe>
-#     </div>
-
-#     <script>
-#         var leftIframe = document.getElementById('mapFrameLeft');
-#         var rightIframe = document.getElementById('mapFrameRight');
-        
-#         // Central hub capturing synchronization flags and cross-routing them
-#         window.addEventListener('message', function(event) {{
-#             if (event.data && event.data.type === 'LEAFLET_SYNC_EVENT') {{
-#                 if (event.source === leftIframe.contentWindow) {{
-#                     rightIframe.contentWindow.postMessage(event.data, '*');
-#                 }} else if (event.source === rightIframe.contentWindow) {{
-#                     leftIframe.contentWindow.postMessage(event.data, '*');
-#                 }}
-#             }}
-#         }});
-#     </script>
-# </body>
-# </html>
-# """
-
+    # 3. Construct master DOM wrapper with cross-iframe cross-talk script
     split_screen_html = f"""<!DOCTYPE html>
     <html>
     <head>

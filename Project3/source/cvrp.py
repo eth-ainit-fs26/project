@@ -35,16 +35,8 @@ from torch.utils.data import DataLoader
 from IPython.core.debugger import set_trace
 import torch
 from typing import List, Optional
-
-MAX_DEMAND_PER_CUSTOMER = 10
-MIN_NUM_CUSTOMERS = 20 # 5
-MAX_NUM_CUSTOMERS = 40
-# VEHICLE_CAPACITY = lambda n_cust: round( max(-n_cust**2/600 + 9/20*n_cust + 65/3, \
-#                                     MAX_DEMAND_PER_CUSTOMER*1.1)) if n_cust<=100 \
-#                                     else 50 # match POMO paper setting
-VEHICLE_CAPACITY = lambda n_cust: 50
-# MU, SIGMA = 25, 6 # for sampling problem sizes around 25 customers
-
+from .parameters import *
+from .cvrp_generator import CVRPGenerator
 
 DEVICE = None # to be set in the notebook before using
 
@@ -63,7 +55,7 @@ def CVRP_DATA_LOADER__RANDOM(num_sample: int, batch_size: int,
             num_sample: total number of data samples to generate
             batch_size: batch size for the data loader
             problem_sizes_mean: the means of problem size per batch; if None, set to 25
-            problem_size_sigma: the stds of problem size per batch; if None, set to 0
+            problem_sizes_std: the stds of problem size per batch; if None, set to 0
             rng: random number generator for reproducibility
     '''
     # Input sanity checks
@@ -109,7 +101,7 @@ class CVRP_Dataset__Random(Dataset):
         self.problem_size_list = np.round(self.rng.normal(problem_sizes_mean, problem_sizes_std))
         self.problem_size_list = np.clip(self.problem_size_list, MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS).astype(int)
 
-        self.demand_scalers_list = [VEHICLE_CAPACITY(problem_size) for problem_size in self.problem_size_list]
+        self.demand_scalers_list = [VEHICLE_CAPACITY] * len(self.problem_size_list)
 
     def __getitem__(self, index):
         # determine the problem size and demand scaler for this index

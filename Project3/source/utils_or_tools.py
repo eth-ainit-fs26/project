@@ -1,8 +1,16 @@
-from .parameters import VEHICLE_CAPACITY, COST_SCALER
+from .parameters import (
+    VEHICLE_CAPACITY, 
+    COST_SCALER,
+    MIN_NUM_CUSTOMERS,
+    MAX_NUM_CUSTOMERS,
+)
+from tqdm import tqdm
+import time
 import numpy as np
-import matplotlib.pyplot as plt
+import networkx as nx
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
+from .cvrp_generator import CVRPGenerator
 
 def reformat_cvrp_instance(cost_matrix: np.ndarray, demands: np.ndarray) -> dict:
     """
@@ -102,3 +110,52 @@ def solve_cvrp_instance_with_ortools(cost_matrix: np.ndarray, demands: np.ndarra
     solution_details["objective_cost"] = solution.ObjectiveValue() / COST_SCALER
     solution_details["total_cost"] = total_cost / COST_SCALER
     return solution_details
+
+
+
+# EVALUATION
+def evaluate_baseline_solver(n_instances_per_size: int, 
+                             generator: CVRPGenerator,
+                             n_cust_min=MIN_NUM_CUSTOMERS,
+                             n_cust_max=MAX_NUM_CUSTOMERS,
+                             step=1,
+                             seed=None):
+    ''' Evaluate the baseline OR-Tools solver on random CVRP instances
+        for problem sizes from MIN_NUM_CUSTOMERS to MAX_NUM_CUSTOMERS.
+        Returns the average distance per problem size.
+        Parameters:
+            n_instances_per_size (int): Number of instances to evaluate per problem size
+            generator (CVRPGenerator): The generator for creating CVRP instances
+            seed (int): seed for reproducible dataset generation
+            n_cust_min (int): Minimum number of customers (inclusive)
+            n_cust_max (int): Maximum number of customers (inclusive)
+            step (int): Step size for iterating through problem sizes
+        Returns:
+            avg_dist_per_size (list): List of average distances per problem size
+            avg_time_per_size (list): List of average solving times per problem size
+            size_range (list): List of problem sizes evaluated
+    '''
+    avg_dist_per_size = [] # to store average distances per problem size
+    avg_time_per_size = [] # to store average solving times per problem size
+    rng = np.random.default_rng(seed) # Initialize random number generator with seed
+    generator.rng = rng # Set the generator's random number generator to ensure reproducibility
+    n_cust_range = np.array(range(n_cust_min, n_cust_max + 1, step))
+    
+    for n_customers in tqdm(n_cust_range, desc="Evaluating OR-Tools Solver"):
+        avg_dist = []
+        avg_time = []
+        _, _, demands, cost_matrices, = generator.sample_batch(
+            batch_size = n_instances_per_size, 
+            num_locations = n_customers+1 # +1 for depot
+        ) 
+        for cost_matrix, demand in zip(cost_matrices, demands):
+            start_time = time.time()
+            solution = solve_cvrp_instance_with_ortools(cost_matrix, demand)
+            end_time = time.time()
+            avg_time.append(end_time - start_time)
+            avg_dist.append(solution["objective_cost"])
+        avg_dist_per_size.append(np.mean(avg_dist))
+        avg_time_per_size.append(np.mean(avg_time))
+    
+    return avg_dist_per_size, avg_time_per_size, (n_cust_range+1).tolist()
+
