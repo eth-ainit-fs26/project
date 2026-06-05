@@ -452,8 +452,8 @@ def visualize_cvrp_solution(G_utm: nx.MultiDiGraph,
 
 
     if fname is not None:
-        m.save(fname)
-        print(f"Map visualization saved to {fname}. Open this file in a web browser to interact with the map.")
+        m.save('visualizations/' + fname)
+        print(f"Map visualization saved to visualizations/{fname}.\nOpen this file in a web browser to interact with the map.")
 
     return m
 
@@ -611,9 +611,9 @@ def visualize_two_cvrp_solutions(G_utm: nx.Graph,
     </html>
     """
         
-        # 4. Save compilation file
+    # 4. Save compilation file
         
     with open(fname, "w", encoding="utf-8") as f:
         f.write(split_screen_html)
     
-    print(f"Dual-view comparison map saved to {fname}. Open this file in a web browser to interact with the synchronized maps.")
+    print(f"Dual-view comparison map saved to visualizations/{fname}.\nOpen this file in a web browser to interact with the synchronized maps.")
