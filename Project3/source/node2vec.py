@@ -145,7 +145,7 @@ def build_node2vec(osmnx_graph, dimensions=N2V_DIM,
 
 
 # PCA Post-processing for zero-centering and rotation
-def postprocess_embeddings(W_matrix, n_components=128):
+def postprocess_embeddings(W_matrix, n_components=N2V_DIM):
     """
     Applies zero-centering and PCA rotation to eliminate anisotropy 
     while preserving 100% of the graph's structural information.
