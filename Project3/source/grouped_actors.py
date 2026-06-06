@@ -70,7 +70,7 @@ class ACTOR(nn.Module):
                                ).to(self.device)
         # 2. Set up next-node probability calculator which maps embeddings to probabilities 
         # over next nodes as actions to take
-        self.node_prob_calculator = Next_Node_Probability_Calculator_for_group(
+        self.node_prob_calculator = Next_Node_Probability_Calculator_for_Group(
                                         EMBEDDING_DIM = self.EMBEDDING_DIM,
                                         HEAD_NUM = self.HEAD_NUM,
                                         KEY_DIM = self.KEY_DIM,
@@ -230,7 +230,7 @@ class Encoder_Layer(nn.Module):
 # ACTOR_SUB_NN : Next_Node_Probability_Calculator
 ########################################
 
-class Next_Node_Probability_Calculator_for_group(nn.Module):
+class Next_Node_Probability_Calculator_for_Group(nn.Module):
     def __init__(self,
                  EMBEDDING_DIM: int,
                  HEAD_NUM: int,
