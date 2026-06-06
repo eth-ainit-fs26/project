@@ -278,10 +278,10 @@ class Next_Node_Probability_Calculator_for_Group(nn.Module):
         # shape = (batch, HEAD_NUM, group, KEY_DIM)
 
         out_concat = multi_head_attention(q, self.k, self.v, ninf_mask=ninf_mask)
-        # shape = (batch, n, HEAD_NUM*KEY_DIM)
+        # shape = (batch, n, HEAD_NUM*KEY_DIM), n=1 or group
 
         mh_atten_out = self.multi_head_combine(out_concat)
-        # shape = (batch, n, EMBEDDING_DIM)
+        # shape = (batch, n, EMBEDDING_DIM), n=1 or group
 
         #  Single-Head Attention, for probability calculation
         #######################################################
