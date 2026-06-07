@@ -19,9 +19,15 @@ import matplotlib.colors as mcolors
 from scipy.spatial.distance import pdist
 from scipy.cluster.hierarchy import linkage, fcluster
 
-def build_node2vec(osmnx_graph, dimensions=N2V_DIM, 
-                   p=P, q=Q, num_walks=NUM_WALKS, 
-                   walk_length=WALK_LENGTH, negative=NEGATIVE, workers=4):
+def build_node2vec(osmnx_graph, 
+                   dimensions=N2V_DIM, 
+                   p=P, 
+                   q=Q, 
+                   num_walks=NUM_WALKS, 
+                   walk_length=WALK_LENGTH, 
+                   negative=NEGATIVE, 
+                   workers=1,
+                   seed=42):
     """
     Build Node2Vec embeddings from an OSMnx graph.
     Parameters:
@@ -33,6 +39,7 @@ def build_node2vec(osmnx_graph, dimensions=N2V_DIM,
         walk_length (int): Length of each random walk
         negative (int): Number of negative samples for Word2Vec training
         workers (int): Number of worker threads to use for training the Word2Vec model
+        seed (int): Random seed for reproducibility
     Returns:
         embeddings (KeyedVectors): The learned node embeddings
     """
@@ -102,6 +109,7 @@ def build_node2vec(osmnx_graph, dimensions=N2V_DIM,
     walks = []
     nodes = list(G.nodes())
     
+    random.seed(seed)  # For reproducibility of walks
     for walk_iter in tqdm(range(num_walks), desc="Generating walks"):
             
         random.shuffle(nodes)
@@ -164,7 +172,7 @@ def postprocess_embeddings(W_matrix, n_components=N2V_DIM):
     new_dot_products = W_optimized @ W_optimized.T
     print("--- Post-PCA Verification ---")
     print(f"Optimized average dot product: {np.mean(new_dot_products):.4f} (Should be near 0)")
-    print(f"Total variance preserved: {sum(pca.explained_variance_ratio_)*100:.2f}% (Should be 100%)")
+    print(f"Total variance preserved: {sum(pca.explained_variance_ratio_)*100:.2f}% (Should be 100% if not compressed)")
     
     return W_optimized
 

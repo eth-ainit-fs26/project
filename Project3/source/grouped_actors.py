@@ -28,6 +28,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from .parameters import N2V_DIM
 
 # For debugging
 from IPython.core.debugger import set_trace
@@ -158,8 +159,8 @@ class Encoder(nn.Module):
         self.KEY_DIM = KEY_DIM
         self.FF_HIDDEN_DIM = FF_HIDDEN_DIM
 
-        self.embedding_depot = nn.Linear(2, EMBEDDING_DIM)
-        self.embedding_node = nn.Linear(3, EMBEDDING_DIM)
+        self.embedding_depot = nn.Linear(2+N2V_DIM, EMBEDDING_DIM)
+        self.embedding_node = nn.Linear(3+N2V_DIM, EMBEDDING_DIM)
         self.layers = nn.ModuleList([Encoder_Layer(EMBEDDING_DIM=EMBEDDING_DIM, 
                                                    HEAD_NUM=HEAD_NUM, 
                                                    KEY_DIM=KEY_DIM, 
@@ -167,16 +168,15 @@ class Encoder(nn.Module):
                                      for _ in range(ENCODER_LAYER_NUM)])
 
     def forward(self, data):
-        # data.shape = (batch, problem+1, 3)
+        # data.shape = (batch, problem+1, 2+N2V_DIM+1) 
+        # where the last dimension contains (x,y,n2v_emb,demand)
 
-        depot_xy = data[:, [0], 0:2]
-        # shape = (batch, 1, 2)
-        node_xy_demand = data[:, 1:, 0:3]
-        # shape = (batch, problem, 3)
+        depot_features = data[:, [0], :-1] # shape = (batch, 1, 2+N2V_DIM)
+        node_features = data[:, 1:, :]     # shape = (batch, problem, 2+N2V_DIM+1)
 
-        embedded_depot = self.embedding_depot(depot_xy)
+        embedded_depot = self.embedding_depot(depot_features)
         # shape = (batch, 1, EMBEDDING_DIM)
-        embedded_node = self.embedding_node(node_xy_demand)
+        embedded_node = self.embedding_node(node_features)
         # shape = (batch, problem, EMBEDDING_DIM)
 
         out = torch.cat((embedded_depot, embedded_node), dim=1)
