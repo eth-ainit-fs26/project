@@ -163,60 +163,6 @@ def get_n_params3(model):
 def get_structure(model):
     print(model)
 
-########################################
-# Augment xy data
-########################################
-def augment_xy_data_by_8_fold(xy_data):
-    # xy_data.shape = (batch_s, problem, 2)
-
-    x = xy_data[:, :, [0]]
-    y = xy_data[:, :, [1]]
-    # x,y shape = (batch, problem, 1)
-    dat1 = torch.cat((x, y), dim=2)
-    dat2 = torch.cat((1-x, y), dim=2)
-    dat3 = torch.cat((x, 1-y), dim=2)
-    dat4 = torch.cat((1-x, 1-y), dim=2)
-    dat5 = torch.cat((y, x), dim=2)
-    dat6 = torch.cat((1-y, x), dim=2)
-    dat7 = torch.cat((y, 1-x), dim=2)
-    dat8 = torch.cat((1-y, 1-x), dim=2)
-
-    data_augmented = torch.cat((dat1, dat2, dat3, dat4, dat5, dat6, dat7, dat8), dim=0)
-    # shape = (8*batch, problem, 2)
-
-    return data_augmented
-
-def visiaulize_8_fold_augmentation():
-    num_points= 30
-    theta = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
-    x, y = 0.4*np.cos(theta)+0.5, 0.4*np.sin(theta)+0.5
-    transforms = [
-        (lambda x,y: (x,y) , 'Original data'),
-        (lambda x,y: (1-x,y) , '(x,y) ↦ (1-x,y)'),
-        (lambda x,y: (x,1-y) , '(x,y) ↦ (x,1-y)'),
-        (lambda x,y: (1-x,1-y) , '(x,y) ↦ (1-x,1-y)'),
-        (lambda x,y: (y,x) , '(x,y) ↦ (y,x)'),
-        (lambda x,y: (1-y,x) , '(x,y) ↦ (1-y,x)'),
-        (lambda x,y: (y,1-x) , '(x,y) ↦ (y,1-x)'),
-        (lambda x,y: (1-y,1-x) , '(x,y) ↦ (1-y,x)'),
-    ]
-    
-    
-    fig, ax = plt.subplots(2,4, figsize = (10,6), sharex=True, sharey=True)
-    
-    for i, transformation in enumerate(transforms):
-        func, func_name = transformation
-        r, c = i//4, i%4
-        new_x, new_y = func(x,y)
-        ax[r][c].scatter(new_x, new_y, c=theta, cmap='inferno', s=50, edgecolor='k')
-        ax[r][c].set_aspect('equal', adjustable='box')
-        ax[r][c].set_xlim(0, 1)
-        ax[r][c].set_ylim(0, 1)
-        ax[r][c].grid(True, linestyle='--', alpha=0.5)
-        ax[r][c].set_title(func_name)
-    fig.suptitle('Eight-fold Data Augmentation', fontsize=18)
-    plt.tight_layout()
-
 
 
 #########################################

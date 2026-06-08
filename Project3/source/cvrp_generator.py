@@ -25,7 +25,7 @@ class CVRPGenerator:
         self.edge_costs = np.zeros(self.num_edges)
         
         for i, (u, v, k, d) in enumerate(G.edges(keys=True, data=True)):
-            # u and v are OSM node IDs, k is the key for parallel edges
+            # u and v are OSM node IDs, i is the edge index
             self.u_idx[i], self.v_idx[i] = node_to_idx[u], node_to_idx[v]
             self.u_x[i], self.u_y[i] = G.nodes[u]['x'], G.nodes[u]['y']
             self.v_x[i], self.v_y[i] = G.nodes[v]['x'], G.nodes[v]['y']
@@ -97,7 +97,7 @@ class CVRPGenerator:
         
         # 5. Generate demand vector
         demands = self.rng.integers(1, self.max_demand + 1, size=num_locations)
-        demands[0] = 0.0 # depot has zero demand
+        demands[0] = 0 # depot has zero demand
         
         return edge_indices, t, demands, cost_matrix 
     
@@ -151,8 +151,8 @@ class CVRPGenerator:
         cost_matrices[:, diag_idx, diag_idx] = 0.0
         
         # 5. Generate demand vectors for the entire batch
-        demands = self.rng.integers(1, self.max_demand + 1, size=(batch_size, num_locations)).astype(float)
-        demands[:, 0] = 0.0 # depot has zero demand
+        demands = self.rng.integers(1, self.max_demand + 1, size=(batch_size, num_locations))
+        demands[:, 0] = 0 # depot has zero demand
 
         return edge_indices, ts, demands, cost_matrices 
 

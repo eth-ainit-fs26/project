@@ -124,7 +124,7 @@ class ACTOR(nn.Module):
         # shape = (batch, group, EMBEDDING_DIM)
 
         # 2. Retrieve the remaining capacity for each tour
-        remaining_loaded = group_state.loaded[:, :, None].to(self.device)
+        remaining_capacity = group_state.remaining_capacity[:, :, None].to(self.device)
         # shape = (batch, group, 1)
 
         # 3. Calculate action probabilities using the node probability calculator
@@ -133,7 +133,7 @@ class ACTOR(nn.Module):
         # which masks out invalid actions
         item_select_probabilities = self.node_prob_calculator(self.encoded_graph, 
                                                               encoded_LAST_NODES,
-                                                              remaining_loaded, 
+                                                              remaining_capacity, 
                                                               ninf_mask=group_state.ninf_mask.to(self.device))
         # shape = (batch, group, problem+1)
 
@@ -261,17 +261,17 @@ class Next_Node_Probability_Calculator_for_Group(nn.Module):
         self.single_head_key = encoded_nodes.transpose(1, 2)
         # shape = (batch, EMBEDDING_DIM, problem+1)
 
-    def forward(self, input1, input2, remaining_loaded, ninf_mask=None):
+    def forward(self, input1, input2, remaining_capacity, ninf_mask=None):
         # input1.shape = (batch, 1, EMBEDDING_DIM) # graph embedding
         # input2.shape = (batch, group, EMBEDDING_DIM) # last node embeddings for each tour
-        # remaining_loaded.shape = (batch, group, 1) # remaining load for each tour
+        # remaining_capacity.shape = (batch, group, 1) # remaining capacity for each tour
         # ninf_mask.shape = (batch, group, problem+1) # -inf mask for invalid actions
 
         group_s = input2.size(1)
 
         #  Multi-Head Attention
         #######################################################
-        input_cat = torch.cat((input1.expand(-1, group_s, -1), input2, remaining_loaded), dim=2)
+        input_cat = torch.cat((input1.expand(-1, group_s, -1), input2, remaining_capacity), dim=2)
         # shape = (batch, group, 2*EMBEDDING_DIM+1)
 
         q = reshape_by_heads(self.Wq(input_cat), head_num=self.HEAD_NUM)
@@ -296,6 +296,10 @@ class Next_Node_Probability_Calculator_for_Group(nn.Module):
         if ninf_mask is None:
             score_masked = score_clipped
         else:
+            # Check if any row in the mask is entirely -inf
+            all_masked = (ninf_mask == float('-inf')).all(dim=2)
+            if all_masked.any():
+                raise ValueError("Found a state where ALL actions are masked out. Check your environment's mask generation!")
             score_masked = score_clipped + ninf_mask
 
         probs = F.softmax(score_masked, dim=2)
