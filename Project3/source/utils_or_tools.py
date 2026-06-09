@@ -39,7 +39,7 @@ def reformat_cvrp_instance(cost_matrix: np.ndarray, demands: np.ndarray) -> dict
     }
 
 
-def solve_cvrp_instance_with_ortools(cost_matrix: np.ndarray, demands: np.ndarray) -> dict:
+def solve_with_ortools(cost_matrix: np.ndarray, demands: np.ndarray) -> dict:
     '''Solve a CVRP instance using OR-Tools and return the solution details.
     Parameters:
         cost_matrix (np.ndarray): pairwise cost between locations (shape: [num_locations, num_locations])
@@ -150,7 +150,7 @@ def evaluate_baseline_solver(n_instances_per_size: int,
         ) 
         for cost_matrix, demand in zip(cost_matrices, demands):
             start_time = time.time()
-            solution = solve_cvrp_instance_with_ortools(cost_matrix, demand)
+            solution = solve_with_ortools(cost_matrix, demand)
             end_time = time.time()
             avg_time.append(end_time - start_time)
             avg_dist.append(solution["objective_cost"])

@@ -252,3 +252,33 @@ def visualize_solver_performance(solver_names: List[str], x_vals: List[float], c
         fig.tight_layout()
     
     return fig
+
+#########################################
+# Solution format conversion
+##########################################
+def convert_tour_to_routes(nodes: torch.LongTensor) -> List[List[int]]:
+    """
+    Convert a sequence of visited nodes (including depots) into a list of routes.
+    Each route is a list of nodes starting and ending with the depot (0).
+    Consecutive zeros indicate the end of one route and the start of another.
+    Trailing zeros that do not indicate additional routes are removed.
+    Parameters:
+    nodes: list of node indices representing the sequence of visited nodes in the solution, e.g. [0, 3, 2, 0, 1, 0, 0]
+    Returns:
+    routes: list of routes, where each route is a list of node indices starting and ending with 0, e.g. [[0, 3, 2, 0], [0, 1, 0]]
+    """
+    nodes = nodes.tolist()
+    while len(nodes) > 1 and nodes[-1] == 0 and nodes[-2] == 0:
+        nodes.pop()
+    routes = []
+    current_route = []
+
+    for node in nodes:
+        current_route.append(node)
+        if node == 0:
+            # If we hit a depot and the current route has more than just the starting 0, close it
+            if len(current_route) > 1:
+                routes.append(current_route)
+            current_route = [0] # Start the next route with the depot
+
+    return routes

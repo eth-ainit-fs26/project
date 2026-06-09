@@ -48,7 +48,8 @@ def CVRP_DATA_LOADER(
     batch_size: int, 
     problem_sizes_mean: Optional[Union[List[NumberType], NumberType]] = None, 
     problem_sizes_std: Optional[Union[List[NumberType], NumberType]] = None, 
-    rng: Optional[np.random.Generator] = None
+    rng: Optional[np.random.Generator] = None,
+    return_edges: bool = False
 ):
     '''
     Dataloader that generates random CVRP instances on-the-fly.
@@ -62,6 +63,7 @@ def CVRP_DATA_LOADER(
         problem_sizes_mean: the means of problem size per batch; if None, set to 25
         problem_sizes_std: the stds of problem size per batch; if None, set to 0
         rng: random number generator for reproducibility
+        return_edges: whether to return the raw edge indices and interpolation factors
      '''
     n_batches = int(np.ceil(num_sample / batch_size))
     
@@ -90,15 +92,17 @@ def CVRP_DATA_LOADER(
         batch_size=batch_size, 
         problem_sizes_mean=problem_sizes_mean,
         problem_sizes_std=problem_sizes_std,
-        rng=rng
+        rng=rng,
+        return_edges=return_edges
     )
     
+    collate_fn = CVRP_collate_fn_with_edges if return_edges else CVRP_collate_fn
     data_loader = DataLoader(
         dataset=dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
-        collate_fn=CVRP_collate_fn
+        collate_fn=collate_fn
     )
     return data_loader
 
@@ -113,7 +117,8 @@ class CVRP_Dataset(Dataset):
                  problem_sizes_mean: List[NumberType], 
                  problem_sizes_std: List[NumberType],
                  normalize: bool = True,
-                 rng: Optional[np.random.Generator] = None):
+                 rng: Optional[np.random.Generator] = None,
+                 return_edges: bool = False):
         '''Constructs a dataset of CVRP instances by pre-generating all the data in batches.
         Parameters:
             generator: an instance of CVRPGenerator that provides the logic for sampling CVRP instances
@@ -124,6 +129,7 @@ class CVRP_Dataset(Dataset):
             problem_sizes_std: the stds of problem size per batch
             normalize: whether to normalize the coordinates
             rng: random number generator for reproducibility
+            return_edges: whether to return the raw edge indices and interpolation factors
         '''
         self.generator = generator
         self.n2v_embeddings = n2v_embeddings
@@ -131,7 +137,9 @@ class CVRP_Dataset(Dataset):
         self.batch_size = batch_size
         self.num_batches = int(np.ceil(num_sample / batch_size))
         self.rng = np.random.default_rng() if rng is None else rng
+        self.generator.rng = self.rng # ensure the generator uses the same rng for reproducibility
         self.normalize = normalize
+        self.return_edges = return_edges
 
         # 1. Generate dynamic problem sizes per batch
         self.problem_size_list = np.round(self.rng.normal(problem_sizes_mean, problem_sizes_std))
@@ -144,6 +152,9 @@ class CVRP_Dataset(Dataset):
         self.batches_node_demand = []
         self.batches_node_n2v = []
         self.batches_cost_matrix = []
+        if self.return_edges:
+            self.batches_edge_idx = []
+            self.batches_t = []
 
         # 3. Use sample_batch to generate all data up front
         for batch_idx in range(self.num_batches):
@@ -181,7 +192,10 @@ class CVRP_Dataset(Dataset):
             self.batches_node_demand.append(node_demand)
             self.batches_node_n2v.append(node_n2v)
             self.batches_cost_matrix.append(cost_matrices)
-
+            if self.return_edges:
+                self.batches_edge_idx.append(edge_idx)
+                self.batches_t.append(ts)
+                
     def __len__(self):
         return self.num_sample
 
@@ -201,6 +215,10 @@ class CVRP_Dataset(Dataset):
         # Combine depot features and customer features
         depot_features = np.concatenate([depot_xy, depot_n2v], axis=-1)  # Shape: (1, 2+embedding_dim)
         node_features = np.concatenate([node_xy, node_n2v], axis=-1)  # Shape: (num_customers, 2+embedding_dim)
+        if self.return_edges:
+            edge_idx = self.batches_edge_idx[batch_number][item_number]
+            t = self.batches_t[batch_number][item_number]
+            return depot_features, node_features, node_demands, cost_matrix, edge_idx, t
         return depot_features, node_features, node_demands, cost_matrix
 
 def CVRP_collate_fn(batch):
@@ -213,6 +231,17 @@ def CVRP_collate_fn(batch):
     
     return depot_features, node_features, node_demands, cost_matrix
 
+def CVRP_collate_fn_with_edges(batch):
+    depot_features_tuples, node_features_tuples, node_demands_tuples, cost_matrix_tuples, edge_idx_tuples, t_tuples = zip(*batch)
+
+    depot_features = torch.FloatTensor(np.array(depot_features_tuples)).to(DEVICE)
+    node_features = torch.FloatTensor(np.array(node_features_tuples)).to(DEVICE)
+    node_demands = torch.LongTensor(np.array(node_demands_tuples))[:, :, None].to(DEVICE)
+    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples)).to(DEVICE)
+    edge_idx = torch.LongTensor(np.array(edge_idx_tuples)).to(DEVICE)
+    t = torch.FloatTensor(np.array(t_tuples)).to(DEVICE)
+
+    return depot_features, node_features, node_demands, cost_matrix, edge_idx, t
 
 DATALOADER = CVRP_DATA_LOADER # short name
 
