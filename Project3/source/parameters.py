@@ -1,6 +1,6 @@
 # CVRP parameters
-MIN_NUM_CUSTOMERS = 40
-MAX_NUM_CUSTOMERS = 50
+MIN_NUM_CUSTOMERS = 30
+MAX_NUM_CUSTOMERS = 40
 MAX_DEMAND = 10 # per customer
 VEHICLE_CAPACITY = 50
 ALPHA = 1e-4 # coefficient for distance (L/m)

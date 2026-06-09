@@ -125,6 +125,7 @@ class ACTOR(nn.Module):
 
         # 2. Retrieve the remaining capacity for each tour
         remaining_capacity = group_state.remaining_capacity[:, :, None].to(self.device)
+        rem_cap_scaled = remaining_capacity / group_state.vehicle_capacity
         # shape = (batch, group, 1)
 
         # 3. Calculate action probabilities using the node probability calculator
@@ -133,7 +134,7 @@ class ACTOR(nn.Module):
         # which masks out invalid actions
         item_select_probabilities = self.node_prob_calculator(self.encoded_graph, 
                                                               encoded_LAST_NODES,
-                                                              remaining_capacity, 
+                                                              rem_cap_scaled, 
                                                               ninf_mask=group_state.ninf_mask.to(self.device))
         # shape = (batch, group, problem+1)
 
@@ -296,10 +297,6 @@ class Next_Node_Probability_Calculator_for_Group(nn.Module):
         if ninf_mask is None:
             score_masked = score_clipped
         else:
-            # Check if any row in the mask is entirely -inf
-            all_masked = (ninf_mask == float('-inf')).all(dim=2)
-            if all_masked.any():
-                raise ValueError("Found a state where ALL actions are masked out. Check your environment's mask generation!")
             score_masked = score_clipped + ninf_mask
 
         probs = F.softmax(score_masked, dim=2)
