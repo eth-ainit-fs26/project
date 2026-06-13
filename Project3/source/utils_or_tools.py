@@ -1,3 +1,30 @@
+"""
+The MIT License
+
+Copyright (c) 2020 Yeong-Dae Kwon
+Copyright (c) 2026 Department of Computer Science, ETH Zurich
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+"""
+
 from .parameters import (
     VEHICLE_CAPACITY, 
     COST_SCALER,
@@ -159,3 +186,42 @@ def evaluate_baseline_solver(n_instances_per_size: int,
     
     return avg_dist_per_size, avg_time_per_size, (n_cust_range+1).tolist()
 
+def evaluate_baseline_solver_using_dataloader(dataloader):
+    ''' Evaluate the baseline OR-Tools solver on random CVRP instances
+        for problem sizes from MIN_NUM_CUSTOMERS to MAX_NUM_CUSTOMERS.
+        Returns the average distance per problem size.
+        Parameters:
+            dataloader: dataloader that provides batches of CVRP instances for evaluation
+        Returns:
+            # cost_mean: List of average cost per batch
+            # cost_q1: List of first quartile of cost per batch
+            # cost_q3: List of third quartile of cost per batch
+            cost: Costs per batch, shape = (num_batches, batch_size)
+            total_time: Total solving times per batch, shape = (num_batches,)
+    '''
+    cost = [] # to store costs per problem size
+    # cost_q1 = [] # to store first quartiles of costs per problem size
+    # cost_q3 = [] # to store third quartiles of costs per problem size
+    total_time = [] # to store total solving times per problem size
+    for demands, _, cost_matrices in tqdm(dataloader, desc="Evaluating OR-Tools Solver"):
+        batch_s = demands.size(0) # batch size
+        time_batch = 0
+        costs_batch = []
+
+        for i in range(batch_s):
+            cost_mat = cost_matrices[i].cpu().numpy()
+            dem = demands[i].cpu().numpy().squeeze()
+            start_time = time.time()
+            solution = solve_with_ortools(cost_mat, dem)
+            end_time = time.time()
+            time_batch += (end_time - start_time)
+            costs_batch.append(solution["objective_cost"])
+
+        cost_batch = np.array(costs_batch)
+        cost.append(cost_batch) # cost per batch
+        # cost_q1.append(np.percentile(cost_batch, 25)) # first quartile of cost per batch
+        # cost_q3.append(np.percentile(cost_batch, 75)) # third quartile of cost per batch
+        total_time.append(time_batch) # time lapse for this batch
+    
+    # return cost, cost_q1, cost_q3, total_time
+    return np.array(cost), np.array(total_time)
