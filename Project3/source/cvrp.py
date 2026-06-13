@@ -118,7 +118,7 @@ class CVRP_Dataset(Dataset):
             batch_size: batch size for the dataset
             problem_sizes_mean: the means of problem size per batch
             problem_sizes_std: the stds of problem size per batch
-            normalize: whether to normalize the coordinates
+            normalize: whether to normalize the cost matrix by the global max cost across the map
             return_edges: whether to return the raw edge indices and interpolation factors
         '''
         self.generator = generator
@@ -155,10 +155,6 @@ class CVRP_Dataset(Dataset):
                 batch_size=self.batch_size, 
                 num_locations=num_locations
             )
-
-            # # Normalize cost matrices if needed
-            # if self.normalize:
-            #     cost_matrices = cost_matrices / self.generator.global_max_cost
 
             # Feature extraction
             # 1. Normalized demand
