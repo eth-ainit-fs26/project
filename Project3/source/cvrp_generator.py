@@ -46,10 +46,6 @@ class CVRPGenerator:
         self.u_y = np.zeros(self.num_edges)
         self.v_x = np.zeros(self.num_edges)
         self.v_y = np.zeros(self.num_edges)
-        self.u_x_norm = np.zeros(self.num_edges)
-        self.u_y_norm = np.zeros(self.num_edges)
-        self.v_x_norm = np.zeros(self.num_edges)
-        self.v_y_norm = np.zeros(self.num_edges)
         self.edge_costs = np.zeros(self.num_edges)
         
         for i, (u, v, k, d) in enumerate(G.edges(keys=True, data=True)):
@@ -57,19 +53,13 @@ class CVRPGenerator:
             self.u_idx[i], self.v_idx[i] = node_to_idx[u], node_to_idx[v]
             self.u_x[i], self.u_y[i] = G.nodes[u]['x'], G.nodes[u]['y']
             self.v_x[i], self.v_y[i] = G.nodes[v]['x'], G.nodes[v]['y']
-            self.u_x_norm[i], self.u_y_norm[i] = G.nodes[u]['x_norm'], G.nodes[u]['y_norm']
-            self.v_x_norm[i], self.v_y_norm[i] = G.nodes[v]['x_norm'], G.nodes[v]['y_norm']
             self.edge_costs[i] = d['fuel']
     
     
-    def compute_interpolated_coordinates(self, edge_indices: np.ndarray, t: np.ndarray, normalized: bool):
+    def compute_interpolated_coordinates(self, edge_indices: np.ndarray, t: np.ndarray):
         '''Given edge indices and interpolation factors t, computes the absolute coordinates of the sampled points.'''
-        if normalized:
-            u_x, u_y = self.u_x_norm[edge_indices], self.u_y_norm[edge_indices]
-            v_x, v_y = self.v_x_norm[edge_indices], self.v_y_norm[edge_indices]
-        else:
-            u_x, u_y = self.u_x[edge_indices], self.u_y[edge_indices]
-            v_x, v_y = self.v_x[edge_indices], self.v_y[edge_indices]
+        u_x, u_y = self.u_x[edge_indices], self.u_y[edge_indices]
+        v_x, v_y = self.v_x[edge_indices], self.v_y[edge_indices]
         
         px = u_x + t * (v_x - u_x)
         py = u_y + t * (v_y - u_y)

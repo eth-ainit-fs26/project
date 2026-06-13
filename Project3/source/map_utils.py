@@ -41,9 +41,11 @@ import shapely.geometry as sg
 from shapely.ops import substring
 import html
 import branca
+import matplotlib.pyplot as plt
+from IPython.display import display
 
 from .cvrp_generator import CVRPGenerator
-from .parameters import ALPHA, BETA
+from .parameters import ALPHA, BETA, VEHICLE_CAPACITY
 
 def generate_diverse_colors(n: int) -> List[str]:
     """
@@ -176,20 +178,6 @@ def prepare_zurich_environment(alpha=ALPHA, beta=BETA):
     # 10. Compute All-Pairs Shortest Path (APSP) using Dijkstra's algorithm
     # We do the computation only once and reuse the resulting matrix for all routing queries
     apsp_matrix = csgraph.shortest_path(adj_matrix, directed=True, method='D')
-    
-    # 11. Normalize node coordinates to [-1, 1] range for better numerical stability
-    print("Adding normalized coordinates to node attributes...")
-    x_coords = [data['x'] for node, data in G.nodes(data=True)]
-    y_coords = [data['y'] for node, data in G.nodes(data=True)]
-        
-    x_min, x_max = min(x_coords), max(x_coords)
-    y_min, y_max = min(y_coords), max(y_coords)
-    x_denom = x_max - x_min
-    y_denom = y_max - y_min
-    # Scale strictly to [-1, 1]
-    for _, data in G.nodes(data=True):    
-        data['x_norm'] = 2*(data['x'] - x_min) / x_denom - 1
-        data['y_norm'] = 2*(data['y'] - y_min) / y_denom - 1
 
     print("Environment ready.")
 
@@ -260,7 +248,7 @@ def visualize_cvrp_solution(G_utm: nx.MultiDiGraph,
     transformer = Transformer.from_crs(G_utm.graph['crs'], "epsg:4326", always_xy=True)
 
     # Convert UTM coordinates of CVRP locations to lat/lon for mapping
-    x_utm, y_utm = generator.compute_interpolated_coordinates(edge_indices, t, normalized=False)
+    x_utm, y_utm = generator.compute_interpolated_coordinates(edge_indices, t)
     lons, lats = transformer.transform(x_utm, y_utm)
     wgs_points = [sg.Point(lon, lat) for lon, lat in zip(lons, lats)]
     points_gdf = gpd.GeoDataFrame(instance, geometry=wgs_points, crs="EPSG:4326")
@@ -644,3 +632,140 @@ def visualize_two_cvrp_solutions(G_utm: nx.Graph,
         f.write(split_screen_html)
     
     print(f"Dual-view comparison map saved to visualizations/{fname}.\nOpen this file in a web browser to interact with the synchronized maps.")
+    compare_solutions([panel_title_1, panel_title_2], [cvrp_solution_1, cvrp_solution_2], cost_matrix, cvrp_instance.demand.values)
+
+# ================================================================
+
+# TOY EXAMPLE
+def visualize_toy_example():
+    names   = ["Depot", "A", "B", "C"]
+    osm_ids = [267814522, 305112987, 412338401, 533920774]   # fake OSM IDs (step 5: remapped to 0..3)
+
+    # Real geographic coordinates (lat, lon) of 4 toy intersections in Zurich
+    latlon = np.array([
+        [47.3745, 8.5340],   # Depot
+        [47.3727, 8.5500],   # A
+        [47.3835, 8.5526],   # B
+        [47.3853, 8.5367],   # C
+    ])
+
+    # step 1 (projection): lat/lon -> UTM zone 32N (EPSG:32632), planar coordinates in meters
+    to_utm = Transformer.from_crs("EPSG:4326", "EPSG:32632", always_xy=True)
+    easting, northing = to_utm.transform(latlon[:, 1], latlon[:, 0])
+    utm = np.column_stack([easting, northing])
+    pos = (utm - utm.min(axis=0)) / (utm.max(axis=0) - utm.min(axis=0))
+
+    display(pd.DataFrame({
+        "node": names, "OSM id (step 5)": [f"{o} -> {i}" for i, o in enumerate(osm_ids)],
+        "lat": latlon[:, 0], "lon": latlon[:, 1],
+        "UTM easting [m]": utm[:, 0].round(0).astype(int),
+        "UTM northing [m]": utm[:, 1].round(0).astype(int),
+        # "norm x": pos[:, 0].round(3), "norm y": pos[:, 1].round(3),
+    }))
+
+    # directed road segments: (from, to, length [m], avg speed [km/h] after congestion factor - step 2)
+    edges = [
+        (0, 1, 900, 50), (1, 0, 900, 50),   # Depot <-> A
+        (1, 2, 600, 30),                    # A -> B : ONE-WAY street
+        (2, 3, 700, 30), (3, 2, 700, 30),   # B <-> C
+        (3, 0, 800, 50), (0, 3, 800, 50),   # C <-> Depot
+    ]
+    pairs = {(u, v) for u, v, *_ in edges}
+
+    # step 3: edge cost = travel time in seconds
+    cost = lambda L, s: L / (s / 3.6)
+
+    # step 4: all-pairs shortest paths (Floyd-Warshall is fine for a tiny graph)
+    n = len(names)
+    apsp_toy = np.full((n, n), np.inf); np.fill_diagonal(apsp_toy, 0)
+    for u, v, L, s in edges:
+        apsp_toy[u, v] = cost(L, s)
+    for k in range(n):
+        apsp_toy = np.minimum(apsp_toy, apsp_toy[:, [k]] + apsp_toy[[k], :])
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 5.5))
+
+    # ---- left panel: the toy road network --------------------------------------
+    for u, v, L, s in edges:
+        p, q = pos[u], pos[v]
+        d = (q - p) / np.linalg.norm(q - p)
+        off = np.array([-d[1], d[0]]) * 0.018          # offset so both directions stay visible
+        one_way = (v, u) not in pairs
+        color = "crimson" if one_way else "steelblue"
+        ax1.annotate("", xy=q - d * 0.09 + off, xytext=p + d * 0.09 + off,
+                    arrowprops=dict(arrowstyle="-|>", color=color,
+                                    lw=2.4 if one_way else 1.6, mutation_scale=18))
+
+    labeled = set()
+    for u, v, L, s in edges:
+        if (v, u) in labeled:
+            continue
+        labeled.add((u, v))
+        mid = (pos[u] + pos[v]) / 2
+        one_way = (v, u) not in pairs
+        txt = f"{L} m @ {s} km/h" + "\n" + f"= {cost(L, s):.0f} s" + ("\nONE-WAY" if one_way else "")
+        ax1.text(*mid, txt, ha="center", va="center", fontsize=8.5,
+                color="crimson" if one_way else "black",
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.8", alpha=0.95))
+
+    ax1.scatter(*pos.T, s=1100, c=["gold"] + ["lightsteelblue"] * 3,
+                edgecolors="black", zorder=3)
+    for i, name in enumerate(names):
+        ax1.text(*pos[i], name + "\n" + str(i), ha="center", va="center",
+                fontsize=9, fontweight="bold", zorder=4)
+        dy = 32 if pos[i, 1] < 0.5 else -44
+        coord_txt = f"({latlon[i, 0]:.4f}N, {latlon[i, 1]:.4f}E)" + "\n" + f"UTM ({utm[i, 0]:.0f}, {utm[i, 1]:.0f})"
+        ax1.annotate(coord_txt, pos[i], textcoords="offset points",
+                    xytext=(0, dy), ha="center", fontsize=7, color="0.4")
+
+    ax1.set_xlim(-0.18, 1.18); ax1.set_ylim(-0.18, 1.18)
+    ax1.set_xlabel("normalized x in [0, 1]"); ax1.set_ylabel("normalized y in [0, 1]")
+    ax1.set_title(r"Toy road network: 4 intersections, A$\rightarrow$B is one-way")
+
+    # ---- right panel: the resulting apsp matrix --------------------------------
+    im = ax2.imshow(apsp_toy, cmap="YlOrRd")
+    ticks = [f"{nm} ({i})" for i, nm in enumerate(names)]
+    ax2.set_xticks(range(n), ticks); ax2.set_yticks(range(n), ticks)
+    ax2.set_xlabel("to j"); ax2.set_ylabel("from i")
+    for i in range(n):
+        for j in range(n):
+            ax2.text(j, i, f"{apsp_toy[i, j]:.0f}", ha="center", va="center", fontsize=11,
+                    color="white" if apsp_toy[i, j] > apsp_toy.max() * 0.6 else "black")
+    for (i, j) in [(1, 2), (2, 1)]:   # highlight the asymmetric pair
+        ax2.add_patch(plt.Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, ec="crimson", lw=3))
+    ax2.set_title(rf"apsp[i][j] (seconds): A$\rightarrow$B = {apsp_toy[1, 2]:.0f} s,  B$\rightarrow$A = {apsp_toy[2, 1]:.0f} s")
+    fig.colorbar(im, ax=ax2, shrink=0.85, label="seconds")
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+def route_cost(route, cost_matrix):
+    return sum(cost_matrix[a, b] for a, b in zip(route[:-1], route[1:]))
+
+def solution_summary(name, routes, cost_matrix, demands):
+    print(f"{name}:")
+    total = 0.0
+    for r in routes:
+        c = route_cost(r, cost_matrix)
+        load = sum(demands[i] for i in r)
+        feasible = "OK" if load <= VEHICLE_CAPACITY else "OVER CAPACITY!"
+        print(f"  route {r}: cost = {c:.2f}, load = {load}/{VEHICLE_CAPACITY} {feasible}")
+        total += c
+    print(f"  -> {len(routes)} routes, total cost = {total:.2f}\n")
+    return total
+
+def compare_solutions(names, sols, cost_matrix, demands):
+    costs = []
+    for name, routes in zip(names, sols):
+        s = solution_summary(name, routes, cost_matrix, demands)
+        costs.append(s)
+    if costs[0] < costs[1]:
+        gap = (costs[1] - costs[0])/costs[0] * 100
+        print(f"{names[0]} is better than {names[1]} by {gap:.2f}%.")
+    elif costs[1] < costs[0]:
+        gap = (costs[0] - costs[1])/costs[1] * 100
+        print(f"{names[1]} is better than {names[0]} by {gap:.2f}%.")
+    else:
+        print("The two solutions have exactly the same cost.")

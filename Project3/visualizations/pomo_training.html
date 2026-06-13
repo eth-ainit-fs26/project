@@ -392,8 +392,8 @@ function setPhaseText(p){
   const txt={
     rollout:'<span class="step">Rollout.</span> Each tour is built action by action; the matrix fills column by column.',
     returns:'<span class="step">Returns.</span> Every finished tour is scored: cheaper tour → higher return 𝓡 = −cost.',
-    baseline:'<span class="step">Baseline.</span> b = the average cost of the N tours of this instance, a fair yardstick, no critic network.',
-    advantage:'<span class="step">Advantage.</span> Cheaper than b → reinforce (green); more expensive → discourage (red). Half up, half down.',
+    baseline:'<span class="step">Baseline.</span> b = the average cost of the N tours of this instance, a fair yardstick.',
+    advantage:'<span class="step">Advantage.</span> Cheaper than b → reinforce (green); more expensive → discourage (red).',
     gradient:'<span class="step">Gradient ascent.</span> θ ← θ + α∇J. Next epoch the actor is a little better → the whole group shifts cheaper.'
   }[p];
   el.innerHTML=txt;

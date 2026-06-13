@@ -169,19 +169,46 @@ def get_structure(model):
 # Visualizations
 ##########################################
 from .parameters import MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS
-
-def visualize_solver_performance(p_sizes: List[float], cost_baseline, time_baseline, cost_actor, time_actor,
-                                 n_instances_per_size: int, eval_seed: int, figsize=(20,4)):
+P_SIZES = list(range(MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS + 1))
+def visualize_solver_performance(cost_baseline, time_baseline, 
+                                 cost_actor=None, time_actor=None,
+                                 n_instances_per_size: int=20, eval_seed: int=42, figsize=(20,4),
+                                 p_sizes=P_SIZES, baseline_only=False):
     ''' Visualize the performance of multiple solvers on CVRP instances.
         Parameters:
-            p_sizes (List[float]): List of problem sizes (number of customers)
             cost_baseline: Array of shape (len(p_sizes), batch_size) containing costs for the baseline solver
             time_baseline: Array of shape (len(p_sizes),) containing solving times for the baseline solver
             cost_actor: Array of shape (len(p_sizes), batch_size) containing costs for the actor solver
             time_actor: Array of shape (len(p_sizes),) containing solving times for the actor solver
             n_instances_per_size (int): Number of instances evaluated per problem size
-            eval_seed (int): Seed used for dataset generation
+            p_sizes: List of problem sizes (number of customers, int)
+            eval_seed: Int, Seed used for dataset generation
+            baseline_only: Bool, If True, only the baseline solver is plotted
     '''
+    if baseline_only:
+        fig, ax = plt.subplots(1,2, figsize=figsize)
+        # Plot baseline costs
+        mu = cost_baseline.mean(axis=1)
+        p25 = np.percentile(cost_baseline, 25, axis=1)
+        p75 = np.percentile(cost_baseline, 75, axis=1)
+        ax[0].plot(p_sizes, mu, marker='o', color='r', label=f"Mean")
+        ax[0].fill_between(p_sizes, p25, p75, color='y', alpha=0.2, label=f"Q1-Q3 range")
+        ax[0].set_xlabel('Number of Customers'), ax[0].set_ylabel(f'Average Solution Cost')
+        ax[0].set_xticks(p_sizes), ax[0].xaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax[0].set_title('Baseline Solver Cost', fontsize=16)
+        ax[0].legend(), ax[0].grid(True)
+        # Plot baseline solving times
+        ax[1].plot(p_sizes, time_baseline, marker='o', color='r')
+        ax[1].set_xlabel('Number of Customers'), ax[1].set_ylabel(f'Total Solving Time (seconds)')
+        ax[1].set_xticks(p_sizes), ax[1].xaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax[1].set_title('Total Solving Time', fontsize=16)
+        ax[1].grid(True)
+
+        plt.suptitle(f'OR-Tools Performance on {n_instances_per_size} random CVRP instances (seed={eval_seed})', fontsize=22)
+        fig.tight_layout()
+        return fig
+    
+
     solver_names = ['OR-Tools', 'POMO']
     times = np.stack((time_baseline, time_actor), axis=0) # shape: (2, len(p_sizes))
     costs = np.stack((cost_baseline, cost_actor), axis=0) # shape: (2, len(p_sizes), batch_size)
@@ -199,7 +226,7 @@ def visualize_solver_performance(p_sizes: List[float], cost_baseline, time_basel
     def plot_absolute_costs(ax: plt.Axes):
         ''' Plot average costs for multiple solvers '''
         for i, solver_name in enumerate(solver_names):
-            ax.plot(p_sizes, mu[i], marker='o', label=solver_name, color=colors[i])
+            ax.plot(p_sizes, mu[i], marker='o', label=f"{solver_name} (mean)", color=colors[i])
             ax.fill_between(p_sizes, p25[i], p75[i], color=colors[i], alpha=0.2, label=f"{solver_name} (Q1-Q3 range)")
         ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Average Solution Cost')
         ax.set_xticks(range(MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS + 1))
@@ -230,21 +257,13 @@ def visualize_solver_performance(p_sizes: List[float], cost_baseline, time_basel
         ax.grid(True)
 
 
-    assert len(solver_names) == len(costs) == len(times), "Solver names, costs, and times length mismatch."
-    if len(solver_names)==1: # only one solver, plot only absolute costs and times
-        fig, ax = plt.subplots(1,2, figsize=figsize)
-        plot_absolute_costs(ax[0]) # plot average costs
-        plot_absolute_times(ax[1]) # plot average solving times
-        plt.suptitle(f'Solver Performance on {n_instances_per_size} random CVRP instances (seed={eval_seed})', fontsize=22)
-        fig.tight_layout()
-    else:
-        fig, ax = plt.subplots(2,2, figsize=figsize)
-        plot_absolute_costs(ax[0][0]) # plot average costs
-        plot_absolute_times(ax[0][1]) # plot average solving times
-        plot_relative_metrics(ax[1][0], kind='cost') # plot relative costs
-        plot_relative_metrics(ax[1][1], kind='time') # plot relative times  
-        plt.suptitle(f'Solver Performance on {n_instances_per_size} random CVRP instances (seed={eval_seed})', fontsize=22)
-        fig.tight_layout()
+    fig, ax = plt.subplots(2,2, figsize=figsize)
+    plot_absolute_costs(ax[0][0]) # plot average costs
+    plot_absolute_times(ax[0][1]) # plot average solving times
+    plot_relative_metrics(ax[1][0], kind='cost') # plot relative costs
+    plot_relative_metrics(ax[1][1], kind='time') # plot relative times  
+    plt.suptitle(f'Solver Performance on {n_instances_per_size} random CVRP instances (seed={eval_seed})', fontsize=22)
+    fig.tight_layout()
     
     return fig
 

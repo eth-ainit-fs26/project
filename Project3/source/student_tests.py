@@ -161,7 +161,7 @@ def test_group_state(GROUP_STATE, DEVICE):
     for batch_s, n_nodes, group_s in [(2, 4, 3), (1, 6, 4), (3, 3, 2)]:
         data = _make_data(n_nodes, batch=batch_s, device=DEVICE)
         int_demand = torch.zeros((batch_s, n_nodes, 1), dtype=torch.long, device=DEVICE)
-        state = GROUP_STATE(group_size=group_s, data=data,
+        state = GROUP_STATE(group_size=group_s, data=data, cost_matrix =_COST_MATRIX.to(DEVICE),
                             int_demand=int_demand, vehicle_capacity=_CAP)
         s2 = (batch_s, group_s)                 # (batch, group)
         s3 = (batch_s, group_s, n_nodes)        # (batch, group, problem+1)
@@ -262,7 +262,7 @@ def test_group_state(GROUP_STATE, DEVICE):
         n_nodes = len(scn["demands"][0])
         data = _make_data(n_nodes, batch=len(scn["demands"]), device=DEVICE)
         int_demand = _make_int_demand(scn["demands"], device=DEVICE)
-        st = GROUP_STATE(group_size=3, data=data,
+        st = GROUP_STATE(group_size=3, data=data, cost_matrix =_COST_MATRIX.to(DEVICE),
                          int_demand=int_demand, vehicle_capacity=_CAP)
         st.move_to(torch.LongTensor(scn["selected"]).to(DEVICE))
         return st

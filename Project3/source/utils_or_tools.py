@@ -158,19 +158,18 @@ def evaluate_baseline_solver(n_instances_per_size: int,
             n_cust_max (int): Maximum number of customers (inclusive)
             step (int): Step size for iterating through problem sizes
         Returns:
-            avg_dist_per_size (list): List of average distances per problem size
-            avg_time_per_size (list): List of average solving times per problem size
-            size_range (list): List of problem sizes evaluated
+            costs_per_size (np.ndarray): Array of costs per problem size
+            times_per_size (np.ndarray): Array of total solving times per problem size
     '''
-    avg_dist_per_size = [] # to store average distances per problem size
-    avg_time_per_size = [] # to store average solving times per problem size
+    costs_per_size = [] # to store costs per problem size
+    times_per_size = [] # to store total solving times per problem size
     rng = np.random.default_rng(seed) # Initialize random number generator with seed
     generator.rng = rng # Set the generator's random number generator to ensure reproducibility
     n_cust_range = np.array(range(n_cust_min, n_cust_max + 1, step))
     
     for n_customers in tqdm(n_cust_range, desc="Evaluating OR-Tools Solver"):
-        avg_dist = []
-        avg_time = []
+        cost_ = []
+        time_ = []
         _, _, demands, cost_matrices, = generator.sample_batch(
             batch_size = n_instances_per_size, 
             num_locations = n_customers+1 # +1 for depot
@@ -179,12 +178,12 @@ def evaluate_baseline_solver(n_instances_per_size: int,
             start_time = time.time()
             solution = solve_with_ortools(cost_matrix, demand)
             end_time = time.time()
-            avg_time.append(end_time - start_time)
-            avg_dist.append(solution["objective_cost"])
-        avg_dist_per_size.append(np.mean(avg_dist))
-        avg_time_per_size.append(np.mean(avg_time))
+            time_.append(end_time - start_time)
+            cost_.append(solution["objective_cost"])
+        costs_per_size.append(cost_)
+        times_per_size.append(sum(time_))
     
-    return avg_dist_per_size, avg_time_per_size, (n_cust_range+1).tolist()
+    return np.array(costs_per_size), np.array(times_per_size)
 
 def evaluate_baseline_solver_using_dataloader(dataloader):
     ''' Evaluate the baseline OR-Tools solver on random CVRP instances
