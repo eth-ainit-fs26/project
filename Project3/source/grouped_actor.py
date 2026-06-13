@@ -2,7 +2,7 @@
 The MIT License
 
 Copyright (c) 2020 Yeong-Dae Kwon
-Copyright (c) 2025 Department of Computer Science, ETH Zurich
+Copyright (c) 2026 Department of Computer Science, ETH Zurich
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from .parameters import N2V_DIM
+from .parameters import NODE_FEATURE_DIM
 
 # For debugging
 from IPython.core.debugger import set_trace
@@ -54,6 +54,7 @@ class ACTOR(nn.Module):
 
         # Set up hyperparameters; you do not need to worry about these
         self.device = device
+        self.NODE_FEATURE_DIM = NODE_FEATURE_DIM
         self.EMBEDDING_DIM = EMBEDDING_DIM
         self.ENCODER_LAYER_NUM = ENCODER_LAYER_NUM
         self.HEAD_NUM = HEAD_NUM
@@ -63,12 +64,14 @@ class ACTOR(nn.Module):
 
         # The actor consists of two sub-networks: encoder and next-node probability calculator
         # 1. Set up encoder network which maps CVRP state to embeddings
-        self.encoder = Encoder(EMBEDDING_DIM = self.EMBEDDING_DIM, 
-                               ENCODER_LAYER_NUM = self.ENCODER_LAYER_NUM, 
-                               HEAD_NUM = self.HEAD_NUM, 
-                               KEY_DIM = self.KEY_DIM,
-                               FF_HIDDEN_DIM = self.FF_HIDDEN_DIM
-                               ).to(self.device)
+        self.encoder = Encoder(
+            NODE_FEATURE_DIM = self.NODE_FEATURE_DIM,
+            EMBEDDING_DIM = self.EMBEDDING_DIM, 
+            ENCODER_LAYER_NUM = self.ENCODER_LAYER_NUM, 
+            HEAD_NUM = self.HEAD_NUM, 
+            KEY_DIM = self.KEY_DIM,
+            FF_HIDDEN_DIM = self.FF_HIDDEN_DIM
+            ).to(self.device)
         # 2. Set up next-node probability calculator which maps embeddings to probabilities 
         # over next nodes as actions to take
         self.node_prob_calculator = Next_Node_Probability_Calculator_for_Group(
@@ -87,7 +90,10 @@ class ACTOR(nn.Module):
 
         self.batch_s = group_state.data.size(0) # batch size
         # node embeddings; shape = (batch, problem+1, EMBEDDING_DIM)
-        self.encoded_nodes = self.encoder(group_state.data.to(self.device))
+        self.encoded_nodes = self.encoder(
+            group_state.data.to(self.device),
+            group_state.cost_matrix.to(self.device)
+        )
         # graph embedding; shape = (batch, 1, EMBEDDING_DIM)
         self.encoded_graph = self.encoded_nodes.mean(dim=1, keepdim=True)
         # reset the node probability calculator with the new node embeddings
@@ -148,32 +154,33 @@ class ACTOR(nn.Module):
 
 class Encoder(nn.Module):
     def __init__(self, 
+                 NODE_FEATURE_DIM: int,
                  EMBEDDING_DIM: int, 
                  ENCODER_LAYER_NUM: int,
                  HEAD_NUM: int,
                  KEY_DIM: int, 
                  FF_HIDDEN_DIM: int):
         super().__init__()
+        self.NODE_FEATURE_DIM = NODE_FEATURE_DIM
         self.EMBEDDING_DIM = EMBEDDING_DIM
         self.ENCODER_LAYER_NUM = ENCODER_LAYER_NUM
         self.HEAD_NUM = HEAD_NUM
         self.KEY_DIM = KEY_DIM
         self.FF_HIDDEN_DIM = FF_HIDDEN_DIM
 
-        self.embedding_depot = nn.Linear(2+N2V_DIM, EMBEDDING_DIM)
-        self.embedding_node = nn.Linear(3+N2V_DIM, EMBEDDING_DIM)
+        self.embedding_depot = nn.Linear(NODE_FEATURE_DIM, EMBEDDING_DIM)
+        self.embedding_node = nn.Linear(NODE_FEATURE_DIM, EMBEDDING_DIM)
         self.layers = nn.ModuleList([Encoder_Layer(EMBEDDING_DIM=EMBEDDING_DIM, 
                                                    HEAD_NUM=HEAD_NUM, 
                                                    KEY_DIM=KEY_DIM, 
                                                    FF_HIDDEN_DIM=FF_HIDDEN_DIM) 
                                      for _ in range(ENCODER_LAYER_NUM)])
 
-    def forward(self, data):
-        # data.shape = (batch, problem+1, 2+N2V_DIM+1) 
-        # where the last dimension contains (x,y,n2v_emb,demand)
-
-        depot_features = data[:, [0], :-1] # shape = (batch, 1, 2+N2V_DIM)
-        node_features = data[:, 1:, :]     # shape = (batch, problem, 2+N2V_DIM+1)
+    def forward(self, data, cost_matrix):
+        # data.shape = (batch, problem+1, NODE_FEATURE_DIM) 
+        # cost_matrix.shape = (batch, problem+1, problem+1)
+        depot_features = data[:, [0], :] # shape = (batch, 1, NODE_FEATURE_DIM)
+        node_features = data[:, 1:, :]   # shape = (batch, problem, NODE_FEATURE_DIM)
 
         embedded_depot = self.embedding_depot(depot_features)
         # shape = (batch, 1, EMBEDDING_DIM)
@@ -184,7 +191,7 @@ class Encoder(nn.Module):
         # shape = (batch, problem+1, EMBEDDING_DIM)
 
         for layer in self.layers:
-            out = layer(out)
+            out = layer(out, cost_matrix)
 
         return out
 
@@ -202,23 +209,39 @@ class Encoder_Layer(nn.Module):
         self.Wv = nn.Linear(EMBEDDING_DIM, HEAD_NUM * KEY_DIM, bias=False)
         self.multi_head_combine = nn.Linear(HEAD_NUM * KEY_DIM, EMBEDDING_DIM)
 
+        ### The 2-layer MLP to map scalar cost to Attention Head Biases
+        self.bias_mlp = nn.Sequential(
+            nn.Linear(1, 16),
+            nn.ReLU(),
+            nn.Linear(16, HEAD_NUM)
+        )
+
         self.addAndNormalization1 = Add_And_Normalization_Module(EMBEDDING_DIM)
         self.feedForward = Feed_Forward_Module(EMBEDDING_DIM, FF_HIDDEN_DIM)
         self.addAndNormalization2 = Add_And_Normalization_Module(EMBEDDING_DIM)
 
-    def forward(self, input1):
-        # input.shape = (batch, problem, EMBEDDING_DIM)
+    def forward(self, input1, cost_matrix):
+        # input1.shape = (batch, problem+1, EMBEDDING_DIM)
+        # cost_matrix.shape = (batch, problem+1, problem+1)
 
         q = reshape_by_heads(self.Wq(input1), head_num=self.HEAD_NUM)
         k = reshape_by_heads(self.Wk(input1), head_num=self.HEAD_NUM)
         v = reshape_by_heads(self.Wv(input1), head_num=self.HEAD_NUM)
-        # q shape = (batch, HEAD_NUM, problem, KEY_DIM)
+        # q shape = (batch, HEAD_NUM, problem+1, KEY_DIM)
 
-        out_concat = multi_head_attention(q, k, v)
-        # shape = (batch, problem, HEAD_NUM*KEY_DIM)
+        # Compute attention bias from cost matrix
+        # 1. Expand cost matrix to (batch, problem+1, problem+1, 1)
+        cost_matrix_expanded = cost_matrix.unsqueeze(-1)
+        # 2. Pass through MLP to get (batch, problem+1, problem+1, HEAD_NUM)
+        bias = self.bias_mlp(cost_matrix_expanded)
+        # 3. Permute to match attention logit shape: (batch, HEAD_NUM, problem+1, problem+1)
+        attn_bias = bias.permute(0, 3, 1, 2)
+        # 4. Pass the bias into the attention calculation
+        out_concat = multi_head_attention(q, k, v, attn_bias=attn_bias)
+        # shape = (batch, problem+1, HEAD_NUM*KEY_DIM)
 
         multi_head_out = self.multi_head_combine(out_concat)
-        # shape = (batch, problem, EMBEDDING_DIM)
+        # shape = (batch, problem+1, EMBEDDING_DIM)
 
         out1 = self.addAndNormalization1(input1, multi_head_out)
         out2 = self.feedForward(out1)
@@ -324,7 +347,7 @@ def reshape_by_heads(qkv, head_num):
     return q_transposed
 
 
-def multi_head_attention(q, k, v, ninf_mask=None):
+def multi_head_attention(q, k, v, ninf_mask=None, attn_bias=None):
     # q shape = (batch, head_num, n, key_dim)   : n can be either 1 or group
     # k,v shape = (batch, head_num, problem, key_dim)
     # ninf_mask.shape = (batch, group, problem)
@@ -336,9 +359,13 @@ def multi_head_attention(q, k, v, ninf_mask=None):
     problem_s = k.size(2)
 
     score = torch.matmul(q, k.transpose(2, 3))
+    score_scaled = score / np.sqrt(key_dim)
     # shape = (batch, head_num, n, problem)
 
-    score_scaled = score / np.sqrt(key_dim)
+    # Inject the geometric bias directly into the raw attention logits
+    if attn_bias is not None:
+        score_scaled = score_scaled + attn_bias
+
     if ninf_mask is not None:
         score_scaled = score_scaled + ninf_mask[:, None, :, :].expand(batch_s, head_num, n, problem_s)
 

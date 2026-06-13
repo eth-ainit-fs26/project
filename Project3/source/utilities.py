@@ -1,8 +1,8 @@
-
 """
 The MIT License
 
 Copyright (c) 2020 Yeong-Dae Kwon
+Copyright (c) 2026 Department of Computer Science, ETH Zurich
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -170,23 +170,37 @@ def get_structure(model):
 ##########################################
 from .parameters import MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS
 
-def visualize_solver_performance(solver_names: List[str], x_vals: List[float], costs: List[List[float]], times: List[List[float]], 
+def visualize_solver_performance(p_sizes: List[float], cost_baseline, time_baseline, cost_actor, time_actor,
                                  n_instances_per_size: int, eval_seed: int, figsize=(20,4)):
     ''' Visualize the performance of multiple solvers on CVRP instances.
         Parameters:
-            solver_names (List[str]): List of solver names
-            xvals (List[float]): List of x-axis values (number of nodes including depot)
-            costs (List[List[float]]): List of average costs per solver
-            times (List[List[float]]): List of average solving times per solver
+            p_sizes (List[float]): List of problem sizes (number of customers)
+            cost_baseline: Array of shape (len(p_sizes), batch_size) containing costs for the baseline solver
+            time_baseline: Array of shape (len(p_sizes),) containing solving times for the baseline solver
+            cost_actor: Array of shape (len(p_sizes), batch_size) containing costs for the actor solver
+            time_actor: Array of shape (len(p_sizes),) containing solving times for the actor solver
             n_instances_per_size (int): Number of instances evaluated per problem size
             eval_seed (int): Seed used for dataset generation
     '''
-    costs, times, x_vals = np.array(costs), np.array(times), np.array(x_vals)-1
+    solver_names = ['OR-Tools', 'POMO']
+    times = np.stack((time_baseline, time_actor), axis=0) # shape: (2, len(p_sizes))
+    costs = np.stack((cost_baseline, cost_actor), axis=0) # shape: (2, len(p_sizes), batch_size)
+    # absolute stats
+    mu = np.mean(costs, axis=2) # shape: (2, len(p_sizes))
+    p25 = np.percentile(costs, 25, axis=2) # shape: (2, len(p_sizes))
+    p75 = np.percentile(costs, 75, axis=2) # shape: (2, len(p_sizes))
+    # normalized stats
+    costs_normalized = cost_actor/cost_baseline # shape: (len(p_sizes), batch_size)
+    mu_normalized = np.mean(costs_normalized, axis=1) # shape: (len(p_sizes),)
+    p25_normalized = np.percentile(costs_normalized, 25, axis=1) # shape: (len(p_sizes),)
+    p75_normalized = np.percentile(costs_normalized, 75, axis=1) # shape: (len(p_sizes),)
 
+    colors = ['y','r']
     def plot_absolute_costs(ax: plt.Axes):
         ''' Plot average costs for multiple solvers '''
         for i, solver_name in enumerate(solver_names):
-            ax.plot(x_vals, costs[i], marker='o', label=solver_name, color=['b','y','r'][i])
+            ax.plot(p_sizes, mu[i], marker='o', label=solver_name, color=colors[i])
+            ax.fill_between(p_sizes, p25[i], p75[i], color=colors[i], alpha=0.2, label=f"{solver_name} (Q1-Q3 range)")
         ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Average Solution Cost')
         ax.set_xticks(range(MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS + 1))
         ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
@@ -195,45 +209,26 @@ def visualize_solver_performance(solver_names: List[str], x_vals: List[float], c
 
     def plot_absolute_times(ax: plt.Axes):
         for i, solver_name in enumerate(solver_names):
-            ax.plot(x_vals, times[i], marker='o', label=solver_name, color=['b','y','r'][i])
-        ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Average Solving Time (seconds)')
-        ax.set_xticks(x_vals), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
-        ax.set_title('Average Solving Time', fontsize=16)
+            ax.plot(p_sizes, times[i], marker='o', label=solver_name, color=colors[i])
+        ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Total Solving Time (seconds)')
+        ax.set_xticks(p_sizes), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+        ax.set_title('Total Solving Time', fontsize=16)
         ax.legend(), ax.grid(True)
 
     def plot_relative_metrics(ax: plt.Axes, kind=Literal['time', 'cost']):
         ''' Plot relative solution cost or solving times compared to a baseline solver, assumed to be the first solver '''
-        baseline_metric = times[0] if kind=='time' else costs[0]
-        assert (baseline_metric > 0).all(), f"Baseline {kind}s must be positive."
-        for i, solver_name in enumerate(solver_names[1:]):
-            metric = times[i+1] if kind=='time' else costs[i+1]
-            ax.plot(x_vals, metric / baseline_metric, marker='o', label=f'{kind.capitalize()}: {solver_name}', color=['y','r'][i])
-        ax.plot(x_vals, np.ones(len(x_vals)), '--', color='b', label='Baseline = 1', alpha=0.7) 
-        ax.set_xticks(x_vals), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
+        if kind == 'time':
+            ax.plot(p_sizes, time_actor/time_baseline, marker='o', label=f'{kind.capitalize()}: {solver_names[-1]}', color=colors[-1])
+        elif kind == 'cost':
+            ax.plot(p_sizes, mu_normalized, marker='o', label=f'{kind.capitalize()}: {solver_names[-1]}', color=colors[-1])
+            ax.fill_between(p_sizes, p25_normalized, p75_normalized, color=colors[-1], alpha=0.2, label=f"{solver_names[-1]} (Q1-Q3 range)")
+        ax.plot(p_sizes, np.ones(len(p_sizes)), '--', color='b', label='Baseline = 1', alpha=0.7) 
+        ax.set_xticks(p_sizes), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
         ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Relative {kind.capitalize()} Performance (Baseline = 1)')
         ax.legend()
-        ax.set_title(f'Average {kind.capitalize()} Ratio against Baseline', fontsize=16)
+        ax.set_title(f'{kind.capitalize()} Ratio against Baseline', fontsize=16)
         ax.grid(True)
 
-    def plot_relative_times_and_costs(ax: plt.Axes):
-        ''' Plot relative solution cost and solving times compared to a baseline solver, assumed to be the first solver '''
-        baseline_cost, baseline_time = costs[0], times[0]
-        assert (baseline_cost > 0).all(), "Baseline costs must be positive."
-        assert (baseline_time > 0).all(), "Baseline times must be positive."
-        for i, solver_name in enumerate(solver_names[1:]):
-            ax.plot(x_vals, costs[i+1] / baseline_cost, marker='o', label=f'Cost: {solver_name}')
-        # ax.plot(x_vals, np.ones(len(x_vals)), '--', color='gray', label='Baseline = 1')  
-        ax.set_xticks(x_vals), ax.xaxis.set_major_locator(ticker.MultipleLocator(2))
-        ax.set_xlabel('Number of Customers'), ax.set_ylabel(f'Relative Cost Performance (Baseline = 1)')
-
-        ax2 = ax.twinx()
-        for i, solver_name in enumerate(solver_names[1:]):
-            ax2.plot(x_vals, times[i+1] / baseline_time, marker='x', label=f'Time: {solver_name}')
-        # ax2.plot(x_vals, np.ones(len(x_vals)), '--', color='gray', label='Baseline = 1')
-        ax2.set_ylabel(f'Relative Time Performance (Baseline = 1)')
-        ax.legend(loc='upper left'), ax2.legend(loc='upper right')
-        ax.set_title('Relative Solution Cost and Solving Time (Ratio against Baseline)', fontsize=16)
-        ax.grid(True)
 
     assert len(solver_names) == len(costs) == len(times), "Solver names, costs, and times length mismatch."
     if len(solver_names)==1: # only one solver, plot only absolute costs and times
@@ -255,7 +250,7 @@ def visualize_solver_performance(solver_names: List[str], x_vals: List[float], c
 
 #########################################
 # Solution format conversion
-##########################################
+#########################################
 def convert_tour_to_routes(nodes: torch.LongTensor) -> List[List[int]]:
     """
     Convert a sequence of visited nodes (including depots) into a list of routes.
