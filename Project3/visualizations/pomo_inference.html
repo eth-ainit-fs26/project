@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>POMO inference</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#1e1e1e; --muted:#6b7280; --line:#d1d5db;
+    --good:#16a34a; --bad:#dc2626; --pomo:#2563eb; --ortools:#ea580c;
+  }
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--bg);margin:0;padding:18px 22px;}
+  h1{font-size:20px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  button{font:inherit;font-size:13px;padding:7px 14px;border:1px solid var(--line);
+         border-radius:8px;background:#f9fafb;cursor:pointer}
+  button:hover{background:#eef2ff;border-color:#a5b4fc}
+  button.primary{background:#2563eb;color:#fff;border-color:#2563eb}
+  button.primary:hover{background:#1d4ed8}
+  .chip{font-size:13px;color:var(--muted)}
+  .badge{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:999px;
+         padding:3px 12px;font-weight:600;font-size:13px}
+  .grid{display:grid;grid-template-columns:1.05fr 1fr;gap:18px;align-items:start}
+  .card{border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;
+           color:var(--muted);margin:0 0 10px}
+  svg{display:block;width:100%}
+  .legend{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5}
+  .legend b{color:var(--ink)}
+  .phase{font-size:13px;margin:10px 0 0;min-height:38px;color:var(--ink)}
+  .phase .step{font-weight:700;color:#2563eb}
+  /* bars */
+  .bars{display:flex;gap:10px;align-items:flex-end;height:170px;
+        border-bottom:2px solid var(--ink);padding:0 6px;position:relative}
+  .bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;
+       position:relative;height:100%}
+  .bar .fill{width:64%;background:#cbd5e1;border-radius:5px 5px 0 0;transition:height .4s,background .4s;
+             display:flex;align-items:flex-start;justify-content:center}
+  .bar .val{font-size:10px;color:#fff;font-weight:700;margin-top:3px}
+  .bar .lab{position:absolute;bottom:-20px;font-size:11px;color:var(--muted);font-weight:600}
+  .crown{position:absolute;top:-16px;font-size:13px;opacity:0;transition:opacity .35s}
+  .pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600}
+  .legdot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  .takeaway{font-size:13px;background:#f9fafb;border:1px solid var(--line);border-radius:8px;
+            padding:9px 12px;margin-top:12px;color:#374151}
+  .twocharts{display:flex;gap:26px;flex-wrap:wrap}
+  .twocharts > div{flex:1;min-width:280px}
+  .chartlab{font-size:12px;color:var(--muted);margin-bottom:4px}
+</style>
+</head>
+<body>
+  <h1>POMO inference</h1>
+  <p class="sub">Synthetic data, same fixed 8-customer instance as the training demo. How a trained
+     actor solves one instance: N greedy rollouts in parallel, keep the cheapest (best of N).</p>
+
+  <div class="controls">
+    <button id="play" class="primary">▶ Play</button>
+    <button id="step">Step ▸</button>
+    <button id="reset">⟲ Reset</button>
+    <span class="chip">speed</span>
+    <input id="speed" type="range" min="1" max="5" value="3"/>
+    <span class="badge" id="badge">rollout 0 / 8</span>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT: instance + N greedy rollouts -->
+    <div class="card">
+      <h2>1 · inference: N greedy rollouts, one per start</h2>
+      <svg id="map" viewBox="0 0 100 86"></svg>
+      <div class="legend">
+        At test time the encoder runs <b>once</b>, then the decoder is rolled out <b>N times in parallel</b>,
+        each forced to start from a different customer. Every step takes the <b>argmax</b> (greedy, no
+        sampling). No search: it is one forward pass through the network.
+      </div>
+    </div>
+
+    <!-- RIGHT: costs of the N rollouts, best-of-N -->
+    <div class="card">
+      <h2>2 · best of N: keep the cheapest tour</h2>
+      <div class="bars" id="bars"></div>
+      <div class="phase" id="phase">Press <span class="step">Play</span> to roll out the trained actor.</div>
+      <div id="result"></div>
+    </div>
+  </div>
+
+<script>
+/* ---------- tiny seeded RNG ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ---------- fixed instance: depot + 8 customers (same as training demo) ---------- */
+const PTS=[[50,42],[18,18],[40,12],[66,15],[85,30],[80,62],[55,74],[28,66],[12,44]];
+const DEM=[0,9,8,10,7,9,8,10,9], CAP=30, NC=8;
+const TCOL=['#2563eb','#7c3aed','#0891b2','#db2777','#d97706','#0d9488','#4338ca','#9333ea'];
+const dist=(a,b)=>Math.hypot(PTS[a][0]-PTS[b][0],PTS[a][1]-PTS[b][1]);
+
+/* greedy (trained-actor) tour forced to start at `start`: nearest-neighbour, depot when full */
+function greedyTour(start){
+  const seq=[0], unvis=new Set(); for(let i=1;i<=NC;i++) unvis.add(i);
+  let load=CAP, cur=0; const go=n=>seq.push(n);
+  go(start); load-=DEM[start]; unvis.delete(start); cur=start;
+  while(unvis.size){
+    let cand=[...unvis]; cand.sort((a,b)=>dist(cur,a)-dist(cur,b)); let next=cand[0];
+    if(DEM[next]>load){ go(0); load=CAP; cur=0; }
+    go(next); load-=DEM[next]; unvis.delete(next); cur=next;
+  }
+  if(seq[seq.length-1]!==0) go(0);
+  return seq;
+}
+const tourCost=s=>{let c=0;for(let i=0;i<s.length-1;i++)c+=dist(s[i],s[i+1]);return c;};
+/* split a tour 0..0 into its routes (each starts and ends at the depot 0) */
+function toRoutes(seq){const routes=[]; let r=[0];
+  for(let i=1;i<seq.length;i++){ r.push(seq[i]); if(seq[i]===0){ routes.push(r); r=[0]; } }
+  if(r.length>1) routes.push(r); return routes;}
+
+/* the N rollouts of the trained actor on this instance */
+const ROLLOUTS=[]; for(let j=1;j<=NC;j++){const s=greedyTour(j);ROLLOUTS.push({s,c:tourCost(s)});}
+const BEST=ROLLOUTS.reduce((bi,r,i,a)=>r.c<a[bi].c?i:bi,0);
+const MAXC=Math.max(...ROLLOUTS.map(r=>r.c))*1.12;
+
+/* ---------- state ---------- */
+let revealed, done, timer;
+const speedMs=()=>({1:1100,2:780,3:560,4:380,5:230})[document.getElementById('speed').value];
+
+function reset(){
+  clearInterval(timer); timer=null; revealed=0; done=false;
+  document.getElementById('play').textContent='▶ Play';
+  document.getElementById('badge').textContent='rollout 0 / '+NC;
+  document.getElementById('phase').innerHTML='Press <span class="step">Play</span> to roll out the trained actor.';
+  document.getElementById('result').innerHTML='';
+  buildBars(); drawMap();
+}
+
+/* ---------- map ---------- */
+function drawMap(){
+  const svg=document.getElementById('map'); const NS='http://www.w3.org/2000/svg'; svg.innerHTML='';
+  for(let j=0;j<revealed;j++){
+    const seq=ROLLOUTS[j].s; let d='M '+PTS[seq[0]][0]+' '+PTS[seq[0]][1];
+    for(let i=1;i<seq.length;i++) d+=' L '+PTS[seq[i]][0]+' '+PTS[seq[i]][1];
+    const p=document.createElementNS(NS,'path'); p.setAttribute('d',d); p.setAttribute('fill','none');
+    p.setAttribute('stroke',TCOL[j]); p.setAttribute('stroke-linejoin','round'); p.setAttribute('stroke-linecap','round');
+    const isBest=done && j===BEST;
+    p.setAttribute('stroke-width',isBest?1.8:0.7);
+    p.setAttribute('opacity', done ? (isBest?1:0) : 0.6);   // at the end show only the winning trajectory
+    svg.appendChild(p);
+  }
+  // nodes
+  for(let i=0;i<PTS.length;i++){
+    if(i===0){
+      const x=PTS[0][0],y=PTS[0][1],r=2.8; let d='';
+      for(let a=0;a<10;a++){const ang=-Math.PI/2+a*Math.PI/5;const rr=a%2?r*0.45:r;
+        d+=(a?'L':'M')+(x+rr*Math.cos(ang))+' '+(y+rr*Math.sin(ang))+' ';}
+      const s=document.createElementNS(NS,'path'); s.setAttribute('d',d+'Z');
+      s.setAttribute('fill','#dc2626'); s.setAttribute('stroke','#7f1d1d'); s.setAttribute('stroke-width',0.3);
+      svg.appendChild(s);
+    } else {
+      const c=document.createElementNS(NS,'circle'); c.setAttribute('cx',PTS[i][0]);c.setAttribute('cy',PTS[i][1]);
+      c.setAttribute('r',2); c.setAttribute('fill','#374151'); svg.appendChild(c);
+      const t=document.createElementNS(NS,'text'); t.setAttribute('x',PTS[i][0]);t.setAttribute('y',PTS[i][1]-3);
+      t.setAttribute('font-size','3.4');t.setAttribute('text-anchor','middle');t.setAttribute('fill','#6b7280');
+      t.textContent=i; svg.appendChild(t);
+    }
+  }
+}
+
+/* ---------- bars ---------- */
+function buildBars(){
+  const bars=document.getElementById('bars'); bars.innerHTML='';
+  for(let j=0;j<NC;j++){
+    const bar=document.createElement('div'); bar.className='bar';
+    const crown=document.createElement('div'); crown.className='crown'; crown.id='crown'+j; crown.textContent='👑';
+    const fill=document.createElement('div'); fill.className='fill'; fill.id='fill'+j; fill.style.height='0%';
+    const val=document.createElement('div'); val.className='val'; val.id='val'+j;
+    const lab=document.createElement('div'); lab.className='lab'; lab.innerHTML='τ<sub>'+(j+1)+'</sub>';
+    lab.style.color=TCOL[j];
+    fill.appendChild(val); bar.appendChild(crown); bar.appendChild(fill); bar.appendChild(lab);
+    bars.appendChild(bar);
+  }
+}
+function showBar(j){
+  const h=Math.max(4,(ROLLOUTS[j].c/MAXC)*100);
+  const fill=document.getElementById('fill'+j); fill.style.height=h+'%';
+  fill.style.background=TCOL[j];
+  document.getElementById('val'+j).textContent=ROLLOUTS[j].c.toFixed(0);
+}
+function highlightBest(){
+  for(let j=0;j<NC;j++){
+    const fill=document.getElementById('fill'+j);
+    fill.style.background = j===BEST ? 'var(--good)' : '#cbd5e1';
+  }
+  document.getElementById('crown'+BEST).style.opacity=1;
+}
+
+/* ---------- driver ---------- */
+function advance(){
+  if(revealed<NC){
+    showBar(revealed); revealed++; drawMap();
+    document.getElementById('badge').textContent='rollout '+revealed+' / '+NC;
+    document.getElementById('phase').innerHTML='<span class="step">Rolling out.</span> Each start gives a '
+      +'different greedy tour, so a different cost. Same instance, N attempts in parallel.';
+    if(revealed===NC){ done=true; }
+    return;
+  }
+  if(done && !document.getElementById('crown'+BEST).style.opacity){
+    highlightBest(); drawMap();
+    const r=ROLLOUTS[BEST];
+    document.getElementById('phase').innerHTML='<span class="step">Best of N.</span> Inference returns the '
+      +'cheapest of the N tours. The other rollouts are discarded.';
+    const routes=toRoutes(r.s);
+    let rh='<div style="margin-top:10px"><span class="pill" style="background:#dcfce7;color:#166534">'
+      +'returned solution: τ<sub>'+(BEST+1)+'</sub> · cost '+r.c.toFixed(0)+'</span></div>';
+    rh+='<div style="margin-top:8px;font-size:13px;line-height:1.9">'
+      +'<div style="color:var(--muted);font-size:12px;margin-bottom:2px">winning trajectory '
+      +'(one line = one vehicle route):</div>';
+    routes.forEach((rt,k)=>{ rh+='<div><b style="color:'+TCOL[BEST]+'">route '+(k+1)+':</b> '
+      +rt.join(' → ')+'</div>'; });
+    rh+='</div>';
+    document.getElementById('result').innerHTML=rh;
+    clearInterval(timer); timer=null; document.getElementById('play').textContent='▶ Play';
+  }
+}
+function play(){
+  if(timer){ clearInterval(timer); timer=null; document.getElementById('play').textContent='▶ Play'; return; }
+  if(done && document.getElementById('crown'+BEST).style.opacity){ reset(); }
+  document.getElementById('play').textContent='⏸ Pause';
+  timer=setInterval(advance, speedMs());
+}
+document.getElementById('play').onclick=play;
+document.getElementById('step').onclick=()=>{ if(timer){play();} advance(); };
+document.getElementById('reset').onclick=reset;
+document.getElementById('speed').oninput=()=>{ if(timer){ clearInterval(timer); timer=setInterval(advance,speedMs()); } };
+reset();
+</script>
+</body>
+</html>

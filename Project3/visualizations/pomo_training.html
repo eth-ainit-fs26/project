@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>POMO training: how it proceeds</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#1e1e1e; --muted:#6b7280; --line:#d1d5db;
+    --good:#16a34a; --bad:#dc2626; --io:#9e9d24;
+    --t1:#2563eb; --t2:#7c3aed; --t3:#0891b2; --t4:#db2777;
+  }
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--bg);margin:0;padding:18px 22px;}
+  h1{font-size:20px;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  button{font:inherit;font-size:13px;padding:7px 14px;border:1px solid var(--line);
+         border-radius:8px;background:#f9fafb;cursor:pointer}
+  button:hover{background:#eef2ff;border-color:#a5b4fc}
+  button.primary{background:#2563eb;color:#fff;border-color:#2563eb}
+  button.primary:hover{background:#1d4ed8}
+  .chip{font-size:13px;color:var(--muted)}
+  .badge{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:999px;
+         padding:3px 12px;font-weight:600;font-size:13px}
+  .grid{display:grid;grid-template-columns:1.05fr 1fr;gap:18px;align-items:start}
+  .card{border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;
+           color:var(--muted);margin:0 0 10px}
+  svg{display:block;width:100%}
+  .legend{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5}
+  .legend b{color:var(--ink)}
+  /* group-state matrix */
+  table.gs{border-collapse:collapse;margin-top:4px;font-variant-numeric:tabular-nums}
+  table.gs td{width:24px;height:24px;text-align:center;border:1px solid #e5e7eb;
+              font-size:12px;color:#9ca3af;transition:background .25s,color .25s}
+  table.gs td.filled{color:var(--ink);font-weight:600}
+  table.gs td.depot{background:#fef3c7}
+  table.gs td.cust{background:#eff6ff}
+  table.gs td.pad{background:#f3f4f6;color:#cbd5e1}
+  table.gs .rowlab{width:50px;border:none;text-align:left;font-size:11px;font-weight:600}
+  .actlab{font-size:11px;color:var(--muted);height:16px;text-align:center}
+  .phase{font-size:13px;margin:10px 0 0;min-height:38px;color:var(--ink)}
+  .phase .step{font-weight:700;color:#2563eb}
+  /* bars */
+  .bars{display:flex;gap:14px;align-items:flex-end;height:170px;
+        border-bottom:2px solid var(--ink);padding:0 8px;position:relative}
+  .bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;
+       position:relative;height:100%}
+  .bar .fill{width:60%;background:#cbd5e1;border-radius:5px 5px 0 0;transition:height .5s,background .4s;
+             display:flex;align-items:flex-start;justify-content:center}
+  .bar .val{font-size:11px;color:#fff;font-weight:700;margin-top:3px}
+  .bar .lab{position:absolute;bottom:-20px;font-size:12px;color:var(--muted);font-weight:600}
+  .baseline{position:absolute;left:0;right:0;border-top:2px dashed #111;opacity:0;transition:opacity .4s}
+  .baseline span{position:absolute;right:2px;top:-17px;font-size:11px;background:#111;color:#fff;
+                 padding:1px 6px;border-radius:4px}
+  .adv{position:absolute;top:-16px;font-size:12px;font-weight:700;opacity:0;transition:opacity .35s}
+  table.summary{border-collapse:collapse;margin-top:26px;font-size:13px;width:100%}
+  table.summary th,table.summary td{border:1px solid #e5e7eb;padding:5px 8px;text-align:center;
+       font-variant-numeric:tabular-nums}
+  table.summary th{background:#f9fafb;color:var(--muted);font-weight:600}
+  .formula{font-size:13px;background:#f9fafb;border:1px solid var(--line);border-radius:8px;
+           padding:8px 12px;margin-top:12px;color:#374151}
+  /* cost matrix */
+  table.cm{border-collapse:collapse;font-variant-numeric:tabular-nums}
+  table.cm th{font-size:10px;color:var(--muted);font-weight:600;width:26px;height:24px;text-align:center}
+  table.cm td.corner{border:none}
+  table.cm td.cmcell{width:28px;height:25px;text-align:center;border:1px solid #e5e7eb;
+       font-size:11px;color:#374151;background:#f8fafc;transition:background .25s,color .25s}
+  table.cm td.cmcell.used{background:#fde68a;color:#92400e;font-weight:700}
+  .rewardcalc{font-size:14px;line-height:2}
+  .rewardcalc .seq{margin-bottom:8px}
+  .rewardcalc .node{display:inline-block;min-width:20px;text-align:center;font-weight:700}
+  .rewardcalc .node.dep{color:#dc2626}
+  .rewardcalc .leg{font-size:11px;color:#92400e;background:#fde68a;border-radius:4px;padding:1px 5px}
+  .rewardcalc .sumline{font-size:13px;line-height:1.8}
+  .rewardcalc code{background:#eef2ff;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+  <h1>POMO training: how it proceeds</h1>
+  <p class="sub">Synthetic data, one fixed 8-customer instance. Watch one batch turn into one gradient step,
+     then watch the actor get better epoch after epoch.</p>
+
+  <div class="controls">
+    <button id="play" class="primary">▶ Play</button>
+    <button id="step">Step ▸</button>
+    <button id="reset">⟲ Reset</button>
+    <span class="chip">speed</span>
+    <input id="speed" type="range" min="1" max="5" value="3"/>
+    <span class="badge" id="epochBadge">epoch 1</span>
+  </div>
+
+  <div class="grid">
+    <!-- LEFT: instance + group-state matrix -->
+    <div class="card">
+      <h2>1 · group environment: N tours in parallel</h2>
+      <svg id="map" viewBox="0 0 100 86"></svg>
+      <div class="actlab" id="actlab">&nbsp;</div>
+      <table class="gs" id="gs"></table>
+      <div class="legend">
+        Each <b>row</b> is one tour <b>τ<sub>j</sub></b>, forced to start from customer <b>j</b>
+        (POMO). Action&nbsp;1 sends everyone to the depot&nbsp;<b>0</b>; action&nbsp;2 is the forced
+        distinct start. A <b>0</b> in the middle = back to the depot, new route; finished rows are
+        <span style="color:#cbd5e1">padded with 0</span>.
+      </div>
+    </div>
+
+    <!-- RIGHT: returns / baseline / advantage -->
+    <div class="card">
+      <h2>2 · baseline &amp; advantage: the training signal</h2>
+      <div class="bars" id="bars"></div>
+      <div class="formula" id="formula">
+        return&nbsp; 𝓡(τ<sub>j</sub>) = −cost(τ<sub>j</sub>) &nbsp;·&nbsp;
+        baseline&nbsp; b = mean cost of the group &nbsp;·&nbsp;
+        advantage&nbsp; A<sub>j</sub> = b − cost(τ<sub>j</sub>)
+      </div>
+      <div class="phase" id="phase">Press <span class="step">Play</span> to start a rollout.</div>
+      <table class="summary" id="summary"></table>
+    </div>
+  </div>
+
+  <!-- reward computation from the cost matrix -->
+  <div class="card" style="margin-top:18px">
+    <h2>3 · reward = − tour cost  (summed from the cost matrix)</h2>
+    <div style="display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start">
+      <div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:5px">
+          cost matrix C[i][j], fuel between locations (depot = 0)</div>
+        <table class="cm" id="cm"></table>
+      </div>
+      <div style="flex:1;min-width:260px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">
+          best tour of this epoch, scored leg by leg</div>
+        <div id="rewardCalc" class="rewardcalc">Run a rollout to see the calculation.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: cost curve over epochs -->
+  <div class="card" style="margin-top:18px">
+    <h2>4 · average tour cost over epochs</h2>
+    <svg id="curve" viewBox="0 0 600 140" style="height:150px"></svg>
+  </div>
+
+<script>
+/* ---------- tiny seeded RNG ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ---------- fixed instance: depot + 8 customers ---------- */
+const PTS = [ [50,42],[18,18],[40,12],[66,15],[85,30],[80,62],[55,74],[28,66],[12,44] ]; // 0=depot, 1..8
+const DEM = [0,9,8,10,7,9,8,10,9]; // demands
+const CAP = 30;                    // vehicle capacity -> forces ~3 routes
+const NC  = 8;                     // customers
+const TCOL = ['#2563eb','#7c3aed','#0891b2','#db2777','#d97706','#0d9488','#4338ca','#9333ea'];
+
+function dist(a,b){const dx=PTS[a][0]-PTS[b][0],dy=PTS[a][1]-PTS[b][1];return Math.hypot(dx,dy);}
+
+/* build one tour forced to start at customer `start`, greediness grows with (1-T) */
+function buildTour(start, T, rng){
+  const seq=[0], unvis=new Set(); for(let i=1;i<=NC;i++) unvis.add(i);
+  let load=CAP, cur=0;
+  const go=n=>seq.push(n);
+  // forced first customer (action 2)
+  go(start); load-=DEM[start]; unvis.delete(start); cur=start;
+  while(unvis.size){
+    // early-training mistake: an untrained policy wastes trips back to the depot.
+    // probability shrinks with temperature T, so later epochs stop doing it -> cheaper tours.
+    if(cur!==0 && load<CAP && rng()<T*0.35){ go(0); load=CAP; cur=0; }
+    let cand=[...unvis];
+    // pick next: mostly nearest-neighbour, a little random early on
+    let next;
+    if(rng()> T*0.6){ cand.sort((a,b)=>dist(cur,a)-dist(cur,b)); next=cand[0]; }
+    else { next=cand[(rng()*cand.length)|0]; }
+    if(DEM[next]>load){ go(0); load=CAP; cur=0; }
+    go(next); load-=DEM[next]; unvis.delete(next); cur=next;
+  }
+  if(seq[seq.length-1]!==0) go(0);
+  return seq;
+}
+function tourCost(seq){let c=0;for(let i=0;i<seq.length-1;i++)c+=dist(seq[i],seq[i+1]);return c;}
+
+/* one epoch -> N tours (rows), costs, baseline */
+function makeEpoch(epoch, rng){
+  const T=Math.max(0.0, 1.0-epoch*0.078);            // "temperature" decays as the actor learns
+  // the actor improves: for each forced start, sample several candidate tours and keep a
+  // better-ranked one as exploration (T) drops -> real tour cost falls smoothly over epochs.
+  const rows=[];
+  for(let j=1;j<=NC;j++){
+    const K=16, cands=[];
+    for(let k=0;k<K;k++) cands.push(buildTour(j,T,rng));
+    cands.sort((a,b)=>tourCost(a)-tourCost(b));
+    const idx=Math.min(K-1, Math.round((K-1)*Math.pow(T,0.8)));
+    rows.push(cands[idx]);
+  }
+  // real cost = sum of the cost-matrix legs of the tour (exactly what the cost matrix below sums to)
+  const costs=rows.map(tourCost);
+  const b=costs.reduce((s,x)=>s+x,0)/NC;             // baseline = mean cost of the group
+  const W=Math.max(...rows.map(r=>r.length));
+  return {rows,costs,b,W,T};
+}
+
+/* ---------- state ---------- */
+let rng, epoch, ep, col, phase, timer, history;
+const PHASES=['rollout','returns','baseline','advantage','gradient'];
+const speedMs=()=>({1:1400,2:1000,3:680,4:430,5:260})[document.getElementById('speed').value];
+
+function reset(){
+  clearInterval(timer); timer=null;
+  rng=mulberry32(7); epoch=1; history=[];
+  startEpoch();
+  document.getElementById('play').textContent='▶ Play';
+  drawCurve();
+}
+function startEpoch(){
+  ep=makeEpoch(epoch,rng); col=0; phase='rollout';
+  document.getElementById('epochBadge').textContent='epoch '+epoch;
+  buildMatrix(); buildBars(); drawMap(0); buildCostMatrix();
+  document.getElementById('rewardCalc').innerHTML='Tours are still being built…';
+  setPhaseText('rollout');
+  renderSummary(false);
+}
+
+/* ---------- matrix ---------- */
+function buildMatrix(){
+  const gs=document.getElementById('gs'); gs.innerHTML='';
+  for(let j=0;j<NC;j++){
+    const tr=document.createElement('tr');
+    const lab=document.createElement('td'); lab.className='rowlab';
+    lab.innerHTML='τ<sub>'+(j+1)+'</sub>'; lab.style.color=TCOL[j];
+    tr.appendChild(lab);
+    for(let k=0;k<ep.W;k++){const td=document.createElement('td');td.id=`c${j}_${k}`;td.textContent='·';tr.appendChild(td);}
+    gs.appendChild(tr);
+  }
+}
+function revealColumn(k){
+  for(let j=0;j<NC;j++){
+    const td=document.getElementById(`c${j}_${k}`); const row=ep.rows[j];
+    if(k<row.length){
+      const v=row[k]; td.textContent=v; td.classList.add('filled');
+      td.classList.add(v===0?'depot':'cust');
+    } else { td.textContent=0; td.classList.add('pad'); }
+  }
+  const labels=['','Action 1 (forced: depot)','Action 2 (forced: start j)'];
+  document.getElementById('actlab').textContent = labels[k+1] || ('Action '+(k+1)+' (actor decides)');
+}
+
+/* ---------- map ---------- */
+function drawMap(upto){
+  const svg=document.getElementById('map'); svg.innerHTML='';
+  const NS='http://www.w3.org/2000/svg';
+  // tours (faded), best highlighted
+  const best=ep.costs.indexOf(Math.min(...ep.costs));
+  ep.rows.forEach((seq,j)=>{
+    const n=Math.min(upto,seq.length);
+    if(n<2) return;
+    let d='M '+PTS[seq[0]][0]+' '+PTS[seq[0]][1];
+    for(let i=1;i<n;i++) d+=' L '+PTS[seq[i]][0]+' '+PTS[seq[i]][1];
+    const p=document.createElementNS(NS,'path');
+    p.setAttribute('d',d); p.setAttribute('fill','none');
+    p.setAttribute('stroke',TCOL[j]);
+    const isBest=(phase!=='rollout'&&j===best);
+    p.setAttribute('stroke-width',isBest?1.6:0.7);
+    p.setAttribute('opacity',isBest?1:(phase==='rollout'?0.55:0.22));
+    p.setAttribute('stroke-linejoin','round'); p.setAttribute('stroke-linecap','round');
+    svg.appendChild(p);
+  });
+  // nodes
+  for(let i=0;i<PTS.length;i++){
+    if(i===0){
+      const s=document.createElementNS(NS,'path');
+      const x=PTS[0][0],y=PTS[0][1],r=2.6;
+      let d='';for(let a=0;a<10;a++){const ang=-Math.PI/2+a*Math.PI/5;const rr=a%2?r*0.45:r;
+        d+=(a?'L':'M')+(x+rr*Math.cos(ang))+' '+(y+rr*Math.sin(ang))+' ';}
+      s.setAttribute('d',d+'Z'); s.setAttribute('fill','#dc2626'); s.setAttribute('stroke','#7f1d1d');
+      s.setAttribute('stroke-width',0.3); svg.appendChild(s);
+    } else {
+      const c=document.createElementNS(NS,'circle');
+      c.setAttribute('cx',PTS[i][0]);c.setAttribute('cy',PTS[i][1]);c.setAttribute('r',2);
+      c.setAttribute('fill','#374151'); svg.appendChild(c);
+      const t=document.createElementNS(NS,'text');
+      t.setAttribute('x',PTS[i][0]);t.setAttribute('y',PTS[i][1]-3);
+      t.setAttribute('font-size','3.4');t.setAttribute('text-anchor','middle');
+      t.setAttribute('fill','#6b7280');t.textContent=i;svg.appendChild(t);
+    }
+  }
+}
+
+/* ---------- cost matrix & reward ---------- */
+function buildCostMatrix(){
+  const cm=document.getElementById('cm'); let h='<tr><td class="corner"></td>';
+  for(let j=0;j<=NC;j++) h+='<th>'+j+'</th>'; h+='</tr>';
+  for(let i=0;i<=NC;i++){
+    h+='<tr><th>'+i+'</th>';
+    for(let j=0;j<=NC;j++){
+      const v=(i===j)?0:dist(i,j);
+      h+='<td id="cm'+i+'_'+j+'" class="cmcell">'+(i===j?'0':v.toFixed(0))+'</td>';
+    }
+    h+='</tr>';
+  }
+  cm.innerHTML=h;
+}
+function renderReward(best){
+  buildCostMatrix();                       // reset highlights
+  const seq=ep.rows[best]; const legs=[]; let sum=0;
+  for(let k=0;k<seq.length-1;k++){
+    const a=seq[k], b2=seq[k+1], c=dist(a,b2); sum+=c; legs.push(c);
+    const cell=document.getElementById('cm'+a+'_'+b2); if(cell) cell.classList.add('used');
+  }
+  let s='<div class="seq">';
+  seq.forEach((n,i)=>{ s+='<span class="node'+(n===0?' dep':'')+'">'+n+'</span>';
+    if(i<seq.length-1) s+=' <span class="leg">'+legs[i].toFixed(0)+'</span>→ '; });
+  s+='</div>';
+  s+='<div class="sumline">cost = '+legs.map(l=>l.toFixed(0)).join(' + ')+' = <b>'+sum.toFixed(1)+'</b></div>';
+  s+='<div class="sumline">reward&nbsp; 𝓡 = −cost = <b style="color:var(--bad)">−'+sum.toFixed(1)+'</b></div>';
+  s+='<div style="font-size:12px;color:var(--muted);margin-top:6px">The environment looks up each leg '
+    +'(i→j) in the cost matrix and sums them. '
+    +'This is the value plotted as τ<sub>'+(best+1)+'</sub> in panel 2.</div>';
+  document.getElementById('rewardCalc').innerHTML=s;
+}
+
+/* ---------- bars ---------- */
+function buildBars(){
+  const bars=document.getElementById('bars'); bars.innerHTML='';
+  const maxC=Math.max(...ep.costs)*1.12;
+  ep.costs.forEach((c,j)=>{
+    const bar=document.createElement('div'); bar.className='bar';
+    const adv=document.createElement('div'); adv.className='adv'; adv.id='adv'+j;
+    const fill=document.createElement('div'); fill.className='fill'; fill.id='fill'+j;
+    fill.style.height='0%';
+    const val=document.createElement('div'); val.className='val'; val.id='val'+j;
+    const lab=document.createElement('div'); lab.className='lab';
+    lab.innerHTML='τ<sub>'+(j+1)+'</sub>'; lab.style.color=TCOL[j];
+    fill.appendChild(val); bar.appendChild(adv); bar.appendChild(fill); bar.appendChild(lab);
+    bar.dataset.cost=c; bar.dataset.max=maxC;
+    bars.appendChild(bar);
+  });
+  // baseline element
+  const bl=document.createElement('div'); bl.className='baseline'; bl.id='baseline';
+  bl.innerHTML='<span>baseline b</span>'; bars.appendChild(bl);
+}
+function showReturns(){
+  ep.costs.forEach((c,j)=>{
+    const maxC=parseFloat(document.querySelector('.bar').dataset.max);
+    const h=Math.max(4,(c/maxC)*100);
+    const fill=document.getElementById('fill'+j); fill.style.height=h+'%';
+    document.getElementById('val'+j).textContent=c.toFixed(1);
+  });
+  renderReward(ep.costs.indexOf(Math.min(...ep.costs)));   // show how the best tour's reward is summed
+}
+function showBaseline(){
+  const maxC=parseFloat(document.querySelector('.bar').dataset.max);
+  const bl=document.getElementById('baseline');
+  bl.style.bottom=((ep.b/maxC)*100)+'%'; bl.style.opacity=1;
+  bl.querySelector('span').textContent='baseline b = '+ep.b.toFixed(1);
+}
+function showAdvantage(){
+  ep.costs.forEach((c,j)=>{
+    const good=c<ep.b;                       // cheaper than average -> reinforce
+    const fill=document.getElementById('fill'+j);
+    fill.style.background=good?'var(--good)':'var(--bad)';
+    const adv=document.getElementById('adv'+j);
+    const A=ep.b-c;                          // advantage in return terms
+    adv.textContent=(A>=0?'▲ +':'▼ ')+A.toFixed(1);
+    adv.style.color=good?'var(--good)':'var(--bad)';
+    adv.style.opacity=1;
+  });
+  renderSummary(true);
+}
+
+/* ---------- summary table ---------- */
+function renderSummary(full){
+  const t=document.getElementById('summary');
+  let h='<tr><th>tour</th><th>cost</th><th>𝓡 = −cost</th>'+(full?'<th>A = b−cost</th><th>effect</th>':'')+'</tr>';
+  ep.costs.forEach((c,j)=>{
+    const A=ep.b-c, good=c<ep.b;
+    h+='<tr><td style="color:'+TCOL[j]+';font-weight:600">τ'+(j+1)+'</td>'
+      +'<td>'+c.toFixed(1)+'</td><td>'+(-c).toFixed(1)+'</td>'
+      +(full?('<td style="color:'+(good?'#16a34a':'#dc2626')+'">'+(A>=0?'+':'')+A.toFixed(1)+'</td>'
+              +'<td style="color:'+(good?'#16a34a':'#dc2626')+'">'+(good?'reinforce ▲':'discourage ▼')+'</td>'):'')
+      +'</tr>';
+  });
+  if(full) h+='<tr><td>mean</td><td><b>'+ep.b.toFixed(1)+'</b></td><td colspan="3" style="color:#6b7280">b is the group baseline</td></tr>';
+  t.innerHTML=h;
+}
+
+/* ---------- phase text ---------- */
+function setPhaseText(p){
+  const el=document.getElementById('phase');
+  const txt={
+    rollout:'<span class="step">Rollout.</span> Each tour is built action by action; the matrix fills column by column.',
+    returns:'<span class="step">Returns.</span> Every finished tour is scored: cheaper tour → higher return 𝓡 = −cost.',
+    baseline:'<span class="step">Baseline.</span> b = the average cost of the N tours of this instance, a fair yardstick, no critic network.',
+    advantage:'<span class="step">Advantage.</span> Cheaper than b → reinforce (green); more expensive → discourage (red). Half up, half down.',
+    gradient:'<span class="step">Gradient ascent.</span> θ ← θ + α∇J. Next epoch the actor is a little better → the whole group shifts cheaper.'
+  }[p];
+  el.innerHTML=txt;
+}
+
+/* ---------- cost curve ---------- */
+function drawCurve(){
+  const svg=document.getElementById('curve'); const NS='http://www.w3.org/2000/svg'; svg.innerHTML='';
+  const W=600,H=140,padL=34,padB=22,padT=10,padR=10;
+  const xs=history.map(d=>d.epoch);
+  const maxE=Math.max(15,...xs,1);
+  // tight autoscale: zoom the y-axis to the data range so the decline reads as steep
+  const bs=history.map(d=>d.b);
+  let lo=bs.length?Math.min(...bs):200, hi=bs.length?Math.max(...bs):300;
+  if(hi-lo<1){ lo-=10; hi+=10; }
+  const pad=(hi-lo)*0.18;
+  const maxC=hi+pad, minC=lo-pad;
+  const X=e=>padL+(e-1)/(maxE-1)*(W-padL-padR);
+  const Y=c=>padT+(1-(c-minC)/(maxC-minC))*(H-padT-padB);
+  // axes
+  const ax=document.createElementNS(NS,'path');
+  ax.setAttribute('d',`M ${padL} ${padT} L ${padL} ${H-padB} L ${W-padR} ${H-padB}`);
+  ax.setAttribute('fill','none');ax.setAttribute('stroke','#9ca3af');ax.setAttribute('stroke-width',1);svg.appendChild(ax);
+  const yl=document.createElementNS(NS,'text');yl.setAttribute('x',6);yl.setAttribute('y',padT-1);
+  yl.setAttribute('font-size','10');yl.setAttribute('fill','#6b7280');yl.textContent='cost';svg.appendChild(yl);
+  // honest y-axis: show the (zoomed) top and bottom values
+  [[maxC,padT+3],[minC,H-padB]].forEach(([v,yy])=>{
+    const t=document.createElementNS(NS,'text');t.setAttribute('x',padL-4);t.setAttribute('y',yy);
+    t.setAttribute('font-size','9');t.setAttribute('fill','#9ca3af');t.setAttribute('text-anchor','end');
+    t.textContent=v.toFixed(0);svg.appendChild(t);});
+  const xl=document.createElementNS(NS,'text');xl.setAttribute('x',W-padR);xl.setAttribute('y',H-6);
+  xl.setAttribute('font-size','10');xl.setAttribute('fill','#6b7280');xl.setAttribute('text-anchor','end');
+  xl.textContent='epoch';svg.appendChild(xl);
+  if(history.length){
+    let d='';history.forEach((pt,i)=>{d+=(i?'L':'M')+X(pt.epoch)+' '+Y(pt.b)+' ';});
+    const line=document.createElementNS(NS,'path');line.setAttribute('d',d);line.setAttribute('fill','none');
+    line.setAttribute('stroke','#2563eb');line.setAttribute('stroke-width',2);svg.appendChild(line);
+    history.forEach(pt=>{const c=document.createElementNS(NS,'circle');c.setAttribute('cx',X(pt.epoch));
+      c.setAttribute('cy',Y(pt.b));c.setAttribute('r',2.6);c.setAttribute('fill','#2563eb');svg.appendChild(c);});
+  }
+}
+
+/* ---------- driver ---------- */
+function advance(){
+  if(phase==='rollout'){
+    revealColumn(col); drawMap(col+1); col++;
+    if(col>=ep.W){ phase='returns'; }
+    return;
+  }
+  if(phase==='returns'){ showReturns(); drawMap(99); setPhaseText('returns'); phase='baseline'; return; }
+  if(phase==='baseline'){ showBaseline(); setPhaseText('baseline'); phase='advantage'; return; }
+  if(phase==='advantage'){ showAdvantage(); setPhaseText('advantage'); phase='gradient'; return; }
+  if(phase==='gradient'){
+    setPhaseText('gradient');
+    history.push({epoch:epoch,b:ep.b}); drawCurve();
+    epoch++; phase='done';
+    return;
+  }
+  if(phase==='done'){ startEpoch(); }
+}
+function step(){ advance(); }
+function play(){
+  if(timer){ clearInterval(timer); timer=null; document.getElementById('play').textContent='▶ Play'; return; }
+  document.getElementById('play').textContent='⏸ Pause';
+  timer=setInterval(advance, speedMs());
+}
+document.getElementById('play').onclick=play;
+document.getElementById('step').onclick=()=>{ if(timer){play();} step(); };
+document.getElementById('reset').onclick=reset;
+document.getElementById('speed').oninput=()=>{ if(timer){ clearInterval(timer); timer=setInterval(advance,speedMs()); } };
+reset();
+</script>
+</body>
+</html>
