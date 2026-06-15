@@ -628,7 +628,7 @@ def visualize_two_cvrp_solutions(G_utm: nx.Graph,
         
     # 4. Save compilation file
         
-    with open(fname, "w", encoding="utf-8") as f:
+    with open(f'visualizations/{fname}', "w", encoding="utf-8") as f:
         f.write(split_screen_html)
     
     print(f"Dual-view comparison map saved to visualizations/{fname}.\nOpen this file in a web browser to interact with the synchronized maps.")

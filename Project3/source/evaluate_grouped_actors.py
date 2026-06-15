@@ -197,3 +197,34 @@ def evaluate_both_solvers(actor, n_instances_per_size, p_sizes, generator, seed)
 
     return or_costs, or_times, actor_costs, actor_times
 
+
+from source.utilities import convert_tour_to_routes
+from source import map_utils
+from source.utils_or_tools import solve_with_ortools
+def compare_POMO_with_baseline(solve_with_POMO_actor: callable, trained_actor, p_size: int, seed: int, 
+                               G_utm, generator, fname='pomo_vs_baseline.html'):
+
+    test_loader = DATALOADER(generator=generator,
+                             num_sample=1, batch_size=1,
+                             problem_sizes_mean=p_size, problem_sizes_std=0, 
+                             rng=np.random.default_rng(seed), return_edges=True
+    )
+    demands, features, cost_matrix, edge_index, t = list(test_loader)[0]
+    pomo_sol = solve_with_POMO_actor(trained_actor, demands, features, cost_matrix)[1]
+    pomo_routes = convert_tour_to_routes(pomo_sol)
+
+    or_mat = cost_matrix.squeeze(0).to('cpu').numpy()
+    or_dem = demands.to('cpu').squeeze().numpy()
+    or_sol = solve_with_ortools(or_mat, or_dem)
+    or_routes = or_sol['routes']
+    or_eid = edge_index.to('cpu').squeeze().numpy()
+    or_t = t.to('cpu').squeeze().numpy()
+
+    test_instance = map_utils.convert_node_info_to_dataframe(or_eid, or_t, or_dem)
+    
+    map_utils.visualize_two_cvrp_solutions(G_utm, generator, test_instance, or_mat, 
+                                           or_routes, pomo_routes,
+                                           panel_title_1="ORTOOLS Solution",
+                                           panel_title_2="POMO Solution",
+                                           fname='pomo_vs_baseline.html'
+    )
