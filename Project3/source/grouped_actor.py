@@ -85,14 +85,14 @@ class ACTOR(nn.Module):
         self.encoded_nodes = None   # node embeddings from encoder
         self.encoded_graph = None   # graph embedding (mean of node embeddings)
 
-    def reset(self, group_state):
-        '''Reset the actor for a new (initial) group state.'''
+    def reset(self, group_state, group_env):
+        '''Reset the actor for a new (initial) group state inside group environment.'''
 
         self.batch_s = group_state.data.size(0) # batch size
         # node embeddings; shape = (batch, problem+1, EMBEDDING_DIM)
         self.encoded_nodes = self.encoder(
             group_state.data.to(self.device),
-            group_state.cost_matrix.to(self.device)
+            group_env.cost_matrix.to(self.device)
         )
         # graph embedding; shape = (batch, 1, EMBEDDING_DIM)
         self.encoded_graph = self.encoded_nodes.mean(dim=1, keepdim=True)

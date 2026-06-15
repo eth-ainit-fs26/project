@@ -77,7 +77,7 @@ def EVAL(grouped_actor: ACTOR,
 
             env = GROUP_ENVIRONMENT(demands, features, cost_matrix)
             group_state, reward, done = env.reset(group_size=group_s)
-            grouped_actor.reset(group_state)
+            grouped_actor.reset(group_state, env)
 
             # First Move is given
             first_action = torch.LongTensor(np.zeros((batch_s, group_s))).to(DEVICE)  # start from node_0-depot
@@ -134,7 +134,7 @@ def evaluate_actor(grouped_actor: ACTOR, dataloader):
             # Step 0
             env = GROUP_ENVIRONMENT(demands, features, cost_matrix)
             group_state, reward, done = env.reset(group_size=group_s)
-            grouped_actor.reset(group_state)
+            grouped_actor.reset(group_state, env)
             # Steps 1 and 2
             first_action = torch.LongTensor(np.zeros((batch_s, group_s))).to(DEVICE) 
             group_state, reward, done = env.step(first_action)
