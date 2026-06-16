@@ -34,6 +34,7 @@ from geopandas import GeoDataFrame
 import osmnx as ox
 import networkx as nx
 import folium
+from folium import plugins
 from pyproj import Transformer
 import shapely.geometry as sg
 from shapely.ops import substring
@@ -346,7 +347,7 @@ def visualize_cvrp_solution(G_utm: nx.MultiDiGraph,
                 route_line = folium.PolyLine(geom_points, color=vehicle_color, weight=4.5, opacity=0.85, 
                                             name=f"Vehicle Route {vehicle_id}").add_to(vehicle_layer)
                 # 2. Bind directional arrows along the path
-                folium.plugins.PolyLineTextPath(
+                plugins.PolyLineTextPath(
                     route_line,
                     '      >      ',       # > as arrow symbol
                     repeat=True,    # Repeat the arrow along the entire route
