@@ -28,14 +28,12 @@ THE SOFTWARE.
 import colorsys
 from typing import List, Optional
 import numpy as np
-import scipy.sparse as sp
-from scipy.sparse import csgraph 
 import pandas as pd
-import geopandas as gpd
+from scipy.sparse import coo_matrix, csgraph 
+from geopandas import GeoDataFrame
 import osmnx as ox
 import networkx as nx
 import folium
-from folium import plugins
 from pyproj import Transformer
 import shapely.geometry as sg
 from shapely.ops import substring
@@ -171,7 +169,7 @@ def prepare_zurich_environment(alpha=ALPHA, beta=BETA):
         col.append(j)
         data_list.append(d['fuel'])
         
-    adj_matrix = sp.coo_matrix((data_list, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
+    adj_matrix = coo_matrix((data_list, (row, col)), shape=(num_nodes, num_nodes)).tocsr()
     # coo_matrix: create a sparse matrix in coordinate (COO) format from the edge list
     # .to_csr(): convert to compressed sparse row format for efficient computation
 
@@ -251,7 +249,7 @@ def visualize_cvrp_solution(G_utm: nx.MultiDiGraph,
     x_utm, y_utm = generator.compute_interpolated_coordinates(edge_indices, t)
     lons, lats = transformer.transform(x_utm, y_utm)
     wgs_points = [sg.Point(lon, lat) for lon, lat in zip(lons, lats)]
-    points_gdf = gpd.GeoDataFrame(instance, geometry=wgs_points, crs="EPSG:4326")
+    points_gdf = GeoDataFrame(instance, geometry=wgs_points, crs="EPSG:4326")
 
     # 1. Initialize Canvas and draw background driving network
     m = edges_gdf.to_crs("EPSG:4326").explore(
@@ -348,7 +346,7 @@ def visualize_cvrp_solution(G_utm: nx.MultiDiGraph,
                 route_line = folium.PolyLine(geom_points, color=vehicle_color, weight=4.5, opacity=0.85, 
                                             name=f"Vehicle Route {vehicle_id}").add_to(vehicle_layer)
                 # 2. Bind directional arrows along the path
-                plugins.PolyLineTextPath(
+                folium.plugins.PolyLineTextPath(
                     route_line,
                     '      >      ',       # > as arrow symbol
                     repeat=True,    # Repeat the arrow along the entire route

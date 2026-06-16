@@ -35,7 +35,6 @@ import re
 import numpy as np
 import torch
 from typing import List, Literal
-import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 from matplotlib import ticker
 
