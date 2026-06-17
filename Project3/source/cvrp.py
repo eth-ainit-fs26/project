@@ -37,6 +37,7 @@ from .parameters import MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS
 from .cvrp_generator import CVRPGenerator
 NumberType = np.generic | int | float
 DEVICE = None # to be set in the notebook before using
+NON_BLOCKING = False # to be set in the notebook before using
 
 def CVRP_DATA_LOADER(
     generator: CVRPGenerator,
@@ -215,20 +216,20 @@ class CVRP_Dataset(Dataset):
 def CVRP_collate_fn(batch):
     demands_tuples, features_tuples, cost_matrix_tuples = zip(*batch)
     
-    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None].to(DEVICE)
-    features = torch.FloatTensor(np.array(features_tuples)).to(DEVICE)
-    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples)).to(DEVICE)
+    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None].to(DEVICE, non_blocking=NON_BLOCKING)
+    features = torch.FloatTensor(np.array(features_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
+    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
 
     return demands, features, cost_matrix
 
 def CVRP_collate_fn_with_edges(batch):
     demands_tuples, features_tuples, cost_matrix_tuples, edge_idx_tuples, t_tuples = zip(*batch)
     
-    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None].to(DEVICE)
-    features = torch.FloatTensor(np.array(features_tuples)).to(DEVICE)
-    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples)).to(DEVICE)
-    edge_idx = torch.LongTensor(np.array(edge_idx_tuples)).to(DEVICE)
-    t = torch.FloatTensor(np.array(t_tuples)).to(DEVICE)
+    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None].to(DEVICE, non_blocking=NON_BLOCKING)
+    features = torch.FloatTensor(np.array(features_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
+    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
+    edge_idx = torch.LongTensor(np.array(edge_idx_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
+    t = torch.FloatTensor(np.array(t_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
 
     return demands, features, cost_matrix, edge_idx, t
 
