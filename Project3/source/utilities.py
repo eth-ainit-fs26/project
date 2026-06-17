@@ -26,6 +26,7 @@ THE SOFTWARE.
 """
 
 
+from asyncio.log import logger
 import logging
 import os
 import datetime
@@ -63,6 +64,9 @@ def Get_Logger(SAVE_FOLDER_NAME):
     # Logger
     #######################################################
     logger = logging.getLogger(result_folder_path) 
+    # For Colab: prevent log messages from being propagated to the root logger 
+    # and printed multiple times
+    logger.propagate = False 
 
     streamHandler = logging.StreamHandler()
     fileHandler = logging.FileHandler('{}/log.txt'.format(result_folder_path))
@@ -90,7 +94,7 @@ def Extract_from_LogFile(result_folder_path, variable_name):
             found = True
             m = re.search(variable_name + '[^\n]+', line)
             break
-    exec_command = "Print(No such variable found !!)"
+    exec_command = "print('No such variable found!')"
     if found:
         return m.group(0)
     else:
