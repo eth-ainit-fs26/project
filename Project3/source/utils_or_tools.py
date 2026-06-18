@@ -192,17 +192,12 @@ def evaluate_baseline_solver_using_dataloader(dataloader):
         Parameters:
             dataloader: dataloader that provides batches of CVRP instances for evaluation
         Returns:
-            # cost_mean: List of average cost per batch
-            # cost_q1: List of first quartile of cost per batch
-            # cost_q3: List of third quartile of cost per batch
             cost: Costs per batch, shape = (num_batches, batch_size)
             total_time: Total solving times per batch, shape = (num_batches,)
     '''
     cost = [] # to store costs per problem size
-    # cost_q1 = [] # to store first quartiles of costs per problem size
-    # cost_q3 = [] # to store third quartiles of costs per problem size
     total_time = [] # to store total solving times per problem size
-    for demands, _, cost_matrices in tqdm(dataloader, desc="Evaluating OR-Tools Solver"):
+    for demands, cost_matrices in tqdm(dataloader, desc="Evaluating OR-Tools Solver"):
         batch_s = demands.size(0) # batch size
         time_batch = 0
         costs_batch = []
@@ -218,9 +213,6 @@ def evaluate_baseline_solver_using_dataloader(dataloader):
 
         cost_batch = np.array(costs_batch)
         cost.append(cost_batch) # cost per batch
-        # cost_q1.append(np.percentile(cost_batch, 25)) # first quartile of cost per batch
-        # cost_q3.append(np.percentile(cost_batch, 75)) # third quartile of cost per batch
         total_time.append(time_batch) # time lapse for this batch
     
-    # return cost, cost_q1, cost_q3, total_time
     return np.array(cost), np.array(total_time)
