@@ -217,8 +217,8 @@ def compare_POMO_with_baseline(solve_with_POMO_actor: callable, trained_actor, p
                              problem_sizes_mean=p_size, problem_sizes_std=0, 
                              rng=np.random.default_rng(seed), return_edges=True
     )
-    demands, features, cost_matrix, edge_index, t = list(test_loader)[0]
-    pomo_sol = solve_with_POMO_actor(trained_actor, demands, features, cost_matrix)[1]
+    demands, cost_matrix, edge_index, t = list(test_loader)[0]
+    pomo_sol = solve_with_POMO_actor(trained_actor, demands, cost_matrix)[1]
     pomo_routes = convert_tour_to_routes(pomo_sol)
 
     or_mat = cost_matrix.squeeze(0).to('cpu').numpy()
