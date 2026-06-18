@@ -32,8 +32,7 @@ import time
 from IPython.core.debugger import set_trace # for debugging
 
 from source.utilities import Average_Meter
-from source.cvrp import DATALOADER, GROUP_ENVIRONMENT
-from source.parameters import MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS
+from source.cvrp import DATALOADER, GROUP_ENVIRONMENT, compute_batched_features
 from source.grouped_actor import ACTOR
 DEVICE = None # to be set in the notebook before using
 
@@ -56,9 +55,9 @@ def EVAL(grouped_actor: ACTOR,
 
     global eval_result
     grouped_actor.eval()
-    DEVICE = grouped_actor.device
+    device = grouped_actor.device
 
-    eval_AM = Average_Meter(DEVICE)
+    eval_AM = Average_Meter(device)
     test_loader = DATALOADER(generator=generator,
                              num_sample=TEST_DATASET_SIZE,
                              batch_size=TEST_BATCH_SIZE,
@@ -67,24 +66,26 @@ def EVAL(grouped_actor: ACTOR,
                              rng=rng)
 
     with torch.no_grad():
-        for demands, features, cost_matrix in test_loader:
+        for demands, cost_matrix in test_loader:
             # demands.shape = (batch, problem+1, 1)
-            # features.shape = (batch, problem+1, NODE_FEATURE_DIM)
             # cost_matrix.shape = (batch, problem+1, problem+1)
-
             batch_s = demands.size(0)
-            group_s = features.size(1) - 1  # = problem size
+            group_s = demands.size(1) - 1  # = problem size
+            # move data to device
+            demands = demands.to(device)
+            cost_matrix = cost_matrix.to(device)
+            features = compute_batched_features(generator, cost_matrix, demands) # already on device
 
             env = GROUP_ENVIRONMENT(demands, features, cost_matrix)
             group_state, reward, done = env.reset(group_size=group_s)
             grouped_actor.reset(group_state, env)
 
             # First Move is given
-            first_action = torch.LongTensor(np.zeros((batch_s, group_s))).to(DEVICE)  # start from node_0-depot
+            first_action = torch.zeros((batch_s, group_s), dtype=torch.long, device=device)
             group_state, reward, done = env.step(first_action)
 
             # Second Move is given
-            second_action = torch.LongTensor(np.arange(group_s)+1)[None, :].expand(batch_s, group_s).to(DEVICE)
+            second_action = torch.arange(1, group_s+1, dtype=torch.long, device=device)[None, :].expand(batch_s, group_s)
             group_state, reward, done = env.step(second_action)
 
             while not done:
@@ -111,10 +112,11 @@ def EVAL(grouped_actor: ACTOR,
     logger.info('--------------------------------------------------------------------------')
 
 
-def evaluate_actor(grouped_actor: ACTOR, dataloader):
+def evaluate_actor(grouped_actor: ACTOR, dataloader, generator):
     ''' Evaluate the trained grouped actor on CVRP test dataset.
     Parameters:
         grouped_actor: trained ACTOR instance to be evaluated (defined in notebook)
+        dataloader: DATALOADER instance that provides the test dataset
         generator: CVRPGenerator instance used to create the test dataset
     Returns:
         cost: costs per batch, shape = (num_batches, batch_size)
@@ -122,23 +124,29 @@ def evaluate_actor(grouped_actor: ACTOR, dataloader):
     '''
     cost = []
     total_time = [] 
-    DEVICE = grouped_actor.device
+    device = grouped_actor.device
     grouped_actor.eval() # set the actor to evaluation mode
 
     with torch.no_grad():
-        for demands, features, cost_matrix in tqdm(dataloader, desc="Evaluating POMO Actor"):
+        for demands, cost_matrix in tqdm(dataloader, desc="Evaluating POMO Actor"):
             start_time = time.time()
             batch_s = demands.size(0) # batch size
-            group_s = features.size(1)-1  # problem size = n_cust
+            group_s = demands.size(1)-1  # problem size = n_cust
 
+            # Move tensors to the correct device for evaluation
+            demands = demands.to(device)
+            cost_matrix = cost_matrix.to(device)
+            # Compute features, shape = (batch, problem+1, NODE_FEATURE_DIM)
+            features = compute_batched_features(generator, cost_matrix, demands) # already on device
+            
             # Step 0
             env = GROUP_ENVIRONMENT(demands, features, cost_matrix)
             group_state, reward, done = env.reset(group_size=group_s)
             grouped_actor.reset(group_state, env)
             # Steps 1 and 2
-            first_action = torch.LongTensor(np.zeros((batch_s, group_s))).to(DEVICE) 
+            first_action = torch.zeros((batch_s, group_s), dtype=torch.long, device=device)
             group_state, reward, done = env.step(first_action)
-            second_action = torch.LongTensor(np.arange(group_s)+1)[None, :].expand(batch_s, group_s).to(DEVICE)
+            second_action = torch.arange(1, group_s+1, dtype=torch.long, device=device)[None, :].expand(batch_s, group_s)
             group_state, reward, done = env.step(second_action)
             # Subsequent Steps
             while not done:
@@ -192,7 +200,7 @@ def evaluate_both_solvers(actor, n_instances_per_size, p_sizes, generator, seed)
         problem_sizes_std=0,
         rng=np.random.default_rng(seed)
     )
-    actor_costs, actor_times = evaluate_actor(actor, test_loader)
+    actor_costs, actor_times = evaluate_actor(actor, test_loader, generator)
     # shapes: (num_batches, batch_size) for costs, (num_batches,) for times
 
     return or_costs, or_times, actor_costs, actor_times

@@ -121,7 +121,7 @@ class CVRPGenerator:
     
     def sample_batch(self, batch_size: int, num_locations: int):
         """
-        Generates a heavily vectorized batch of independent CVRP instances.
+        Generates a batch of random CVRP instances.
         Inputs:
             batch_size: The number of independent CVRP instances to generate in the batch
             num_locations: The number of locations (including the depot) to sample for each CVRP instance

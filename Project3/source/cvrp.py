@@ -25,7 +25,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-# EXTERNAL LIBRARY
 import numpy as np
 from numpy.random._generator import Generator
 import torch
@@ -36,8 +35,6 @@ from IPython.core.debugger import set_trace
 from .parameters import MIN_NUM_CUSTOMERS, MAX_NUM_CUSTOMERS
 from .cvrp_generator import CVRPGenerator
 NumberType = np.generic | int | float
-DEVICE = None # to be set in the notebook before using
-NON_BLOCKING = False # to be set in the notebook before using
 
 def CVRP_DATA_LOADER(
     generator: CVRPGenerator,
@@ -140,7 +137,6 @@ class CVRP_Dataset(Dataset):
         
         # 2. Pre-allocate storage lists for the batched data
         self.batches_demands = []
-        self.batches_features = []
         self.batches_cost_matrix = []
         if self.return_edges:
             self.batches_edge_idx = []
@@ -157,39 +153,8 @@ class CVRP_Dataset(Dataset):
                 num_locations=num_locations
             )
 
-            # Feature extraction
-            # 1. Normalized demand
-            normalized_demands = demands / self.generator.max_demand
-
-            # 2. Mask the diagonal with NaN so self-loops don't skew the statistics
-            masked_costs = cost_matrices / self.generator.global_max_cost
-            diag_idx = np.arange(num_locations)
-            masked_costs[:, diag_idx, diag_idx] = np.nan
-            
-            # 3. Compute Outbound Stats (Row-wise: axis=1)
-            min_out = np.nanmin(masked_costs, axis=1)
-            mean_out = np.nanmean(masked_costs, axis=1)
-            std_out = np.nanstd(masked_costs, axis=1)
-            p10_out, p50_out, p90_out = np.nanpercentile(masked_costs, [10, 50, 90], axis=1)
-
-            # 4. Compute Inbound Stats (Column-wise: axis=2)
-            min_in = np.nanmin(masked_costs, axis=2)
-            mean_in = np.nanmean(masked_costs, axis=2)
-            std_in = np.nanstd(masked_costs, axis=2)
-            p10_in, p50_in, p90_in = np.nanpercentile(masked_costs, [10, 50, 90], axis=2)
-
-            # 5. Stack into the final Node Feature Tensor
-            # Shape before stack: All are (batch_size, num_locations)
-            # Shape after stack: (batch_size, num_locations, NODE_FEATURE_DIM)
-            features = np.stack([
-                normalized_demands, min_in, min_out, 
-                mean_in, mean_out, std_in, std_out, 
-                p10_in, p10_out, p50_in, p50_out, p90_in, p90_out
-            ], axis=-1)
-
             # Append the arrays to our dataset storage
             self.batches_demands.append(demands)
-            self.batches_features.append(features)
             self.batches_cost_matrix.append(cost_matrices)
             if self.return_edges:
                 self.batches_edge_idx.append(edge_idx)
@@ -205,37 +170,102 @@ class CVRP_Dataset(Dataset):
 
         # Extract the single item from our pre-allocated batch tensors
         demands = self.batches_demands[batch_number][item_number]
-        features = self.batches_features[batch_number][item_number]
         cost_matrix = self.batches_cost_matrix[batch_number][item_number] # Shape: (num_locations, num_locations)        
         if self.return_edges:
             edge_idx = self.batches_edge_idx[batch_number][item_number]
             t = self.batches_t[batch_number][item_number]
-            return demands, features, cost_matrix, edge_idx, t
-        return demands, features, cost_matrix
+            return demands, cost_matrix, edge_idx, t
+        return demands, cost_matrix
 
 def CVRP_collate_fn(batch):
-    demands_tuples, features_tuples, cost_matrix_tuples = zip(*batch)
+    demands_tuples, cost_matrix_tuples = zip(*batch)
     
-    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None].to(DEVICE, non_blocking=NON_BLOCKING)
-    features = torch.FloatTensor(np.array(features_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
-    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
+    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None]
+    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples))
 
-    return demands, features, cost_matrix
+    return demands, cost_matrix
 
 def CVRP_collate_fn_with_edges(batch):
-    demands_tuples, features_tuples, cost_matrix_tuples, edge_idx_tuples, t_tuples = zip(*batch)
+    demands_tuples, cost_matrix_tuples, edge_idx_tuples, t_tuples = zip(*batch)
     
-    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None].to(DEVICE, non_blocking=NON_BLOCKING)
-    features = torch.FloatTensor(np.array(features_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
-    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
-    edge_idx = torch.LongTensor(np.array(edge_idx_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
-    t = torch.FloatTensor(np.array(t_tuples)).to(DEVICE, non_blocking=NON_BLOCKING)
+    demands = torch.LongTensor(np.array(demands_tuples))[:,:,None]
+    cost_matrix = torch.FloatTensor(np.array(cost_matrix_tuples))
+    edge_idx = torch.LongTensor(np.array(edge_idx_tuples))
+    t = torch.FloatTensor(np.array(t_tuples))
 
-    return demands, features, cost_matrix, edge_idx, t
+    return demands, cost_matrix, edge_idx, t
 
 DATALOADER = CVRP_DATA_LOADER # short name
 
+# =========== FEATURE EXTRACTION ===========
+def strip_diagonal(matrix):
+    """Takes a tensor of shape (B, N, N) and returns a tensor of shape (B, N, N-1)
+    containing only the off-diagonal elements.
+    """
+    B, N, _ = matrix.shape
+    device = matrix.device
 
+    # 1. Flatten the last two dimensions to (B, N*N)
+    flattened = matrix.reshape(B, N * N)
+    # 2. Create a mask for all elements EXCEPT the diagonal indices (0, N+1, 2N+2, ...)
+    # There are N*N total elements per sample, and diagonals occur every (N+1) elements.
+    diag_indices = torch.arange(0, N * N, N + 1, device=device)
+    off_diag_mask = torch.ones(N * N, dtype=torch.bool, device=device)
+    off_diag_mask[diag_indices] = False
+
+    # 3. Filter using the mask and reshape to (B, N, N-1)
+    # Since the mask is the same for every batch, we can expand it
+    return flattened[:, off_diag_mask].reshape(B, N, N - 1)
+
+def compute_batched_features(generator: CVRPGenerator, 
+                             cost_matrices: torch.Tensor, 
+                             demands: torch.Tensor) -> torch.Tensor:
+    '''
+    Node feature extraction
+    Parameters:
+        generator: CVRPGenerator instance containing problem parameters
+        cost_matrices: FloatTensor of shape (batch, num_locations, num_locations) with pairwise travel costs
+        demands: LongTensor of shape (batch, num_locations, 1) with node demands
+    Returns:
+        features: FloatTensor of shape (batch, num_locations, NODE_FEATURE_DIM) with extracted node features
+    '''
+    B, N, _ = cost_matrices.size() # batch size, number of locations (including depot)
+    device = cost_matrices.device
+    
+    # 1. Normalize inputs
+    normalized_demands = demands.squeeze(-1) / generator.max_demand
+    normalized_costs = cost_matrices / generator.global_max_cost
+
+    # 2. Strip the diagonals out completely
+    outbound = strip_diagonal(normalized_costs) # shape: (B, N, N-1)
+    inbound = strip_diagonal(normalized_costs.transpose(1,2)) # shape: (B, N, N-1) 
+
+    # 3. Compute Outbound Stats 
+    min_out = torch.min(outbound, axis=2).values
+    mean_out = torch.mean(outbound, axis=2)
+    std_out = torch.std(outbound, axis=2)
+    p10_out = torch.quantile(outbound, 0.1, dim=2)
+    p50_out = torch.quantile(outbound, 0.5, dim=2)
+    p90_out = torch.quantile(outbound, 0.9, dim=2)
+
+    # 4. Compute Inbound Stats (Column-wise: axis=2)
+    min_in = torch.min(inbound, axis=2).values
+    mean_in = torch.mean(inbound, axis=2)
+    std_in = torch.std(inbound, axis=2)
+    p10_in = torch.quantile(inbound, 0.1, dim=2)
+    p50_in = torch.quantile(inbound, 0.5, dim=2)
+    p90_in = torch.quantile(inbound, 0.9, dim=2)
+
+    # 5. Stack into the final Node Feature Tensor
+    # Shape before stack: All are (batch_size, num_locations)
+    # Shape after stack: (batch_size, num_locations, NODE_FEATURE_DIM)
+    features = torch.stack([
+        normalized_demands, min_in, min_out, 
+        mean_in, mean_out, std_in, std_out, 
+        p10_in, p10_out, p50_in, p50_out, p90_in, p90_out
+    ], axis=-1)
+
+    return features
 
 ####################################
 # STATE
