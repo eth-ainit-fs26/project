@@ -30,6 +30,7 @@ from asyncio.log import logger
 import logging
 import os
 import datetime
+import sys
 import pytz
 import re
 
@@ -50,14 +51,14 @@ def timetz(*args):
 def Get_Logger(SAVE_FOLDER_NAME):
     # make_dir
     #######################################################
-    prefix = datetime.datetime.now(pytz.timezone("Europe/Zurich")).strftime("%Y%m%d_%H%M__")
-    result_folder_no_postfix = "./result/{}".format(prefix + SAVE_FOLDER_NAME)
+    prefix = datetime.datetime.now(tz).strftime("%Y%m%d_%H%M__")
+    result_folder_no_postfix = f"./result/{prefix + SAVE_FOLDER_NAME}"
 
     result_folder_path = result_folder_no_postfix
     folder_idx = 0
     while os.path.exists(result_folder_path):
         folder_idx += 1
-        result_folder_path = result_folder_no_postfix + "({})".format(folder_idx)
+        result_folder_path = f"{result_folder_no_postfix}({folder_idx})"
 
     os.makedirs(result_folder_path)
 
@@ -68,14 +69,21 @@ def Get_Logger(SAVE_FOLDER_NAME):
     # and printed multiple times
     logger.propagate = False 
 
-    streamHandler = logging.StreamHandler()
-    fileHandler = logging.FileHandler('{}/log.txt'.format(result_folder_path))
+    streamHandler = logging.StreamHandler(sys.stdout)
+    fileHandler = logging.FileHandler(f'{result_folder_path}/log.txt')
 
     formatter = logging.Formatter("[%(asctime)s] %(message)s", "%Y-%m-%d %H:%M:%S")
     formatter.converter = timetz
 
     streamHandler.setFormatter(formatter)
     fileHandler.setFormatter(formatter)
+
+    # Force StreamHandler to instantly flush logs to the Colab UI in real-time
+    original_emit = streamHandler.emit
+    def flushed_emit(record):
+        original_emit(record)
+        streamHandler.flush()
+    streamHandler.emit = flushed_emit
 
     logger.addHandler(streamHandler)
     logger.addHandler(fileHandler)
@@ -85,7 +93,7 @@ def Get_Logger(SAVE_FOLDER_NAME):
     return logger, result_folder_path
 
 def Extract_from_LogFile(result_folder_path, variable_name):
-    logfile_path = '{}/log.txt'.format(result_folder_path)
+    logfile_path = f'{result_folder_path}/log.txt'
     with open(logfile_path) as f:
         datafile = f.readlines()
     found = False  # This isn't really necessary
